@@ -12,10 +12,11 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: Arial, sans-serif;
             background: #000000;
             min-height: 100vh;
             padding: 20px;
+            color: #fff;
         }
 
         .search-container {
@@ -29,9 +30,18 @@
             width: 100%;
             padding: 15px 20px;
             font-size: 16px;
-            border: 4px solid orange;
-            background: orange;
+            border: none;
+            background: #ff9933;
             color: #000000;
+        }
+
+        #searchInput::placeholder {
+            color: #000000;
+            opacity: 0.7;
+        }
+
+        #searchInput:focus {
+            outline: 2px solid #ffaa55;
         }
     </style>
 </head>

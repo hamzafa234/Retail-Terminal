@@ -6,13 +6,15 @@ from datetime import datetime
 import pandas as pd
 import requests
 from openai import OpenAI
-import typer 
-from typing import Optional
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
+from flask import Flask, render_template, url_for, request, redirect
+from flask_sqlalchemy import SQLAlchemy
 
-app = typer.Typer()
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///test.db'
+db = SQLAlchemy(app)
 
 client = OpenAI(
   api_key="xxxxxxxxxxx"
@@ -590,4 +592,6 @@ def main(command):
     current_price = stock.info.get("currentPrice")
 
 if __name__ == "__main__":
-    app()
+    with app.app_context():
+        db.create_all()  
+    app.run(debug=True)

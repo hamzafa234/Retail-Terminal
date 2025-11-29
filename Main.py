@@ -167,7 +167,6 @@ def get_30y_treasury_yield():
     latest_yield = data["Close"].iloc[-1]
     return latest_yield
 
-
 def credit_spread_analysis(ticker):
 
     try: 
@@ -226,10 +225,7 @@ def compare(ticker):
         if comp is not None:
             temp = getCompVal(comp)
             lis.append(temp)
-        
-        
-
-
+           
 def format_large_number(num):
     """Format large numbers with B (billions), M (millions), or K (thousands)"""
     if num >= 1_000_000_000_000:  # Trillions
@@ -311,215 +307,6 @@ def calculate_growth_rate(terminal_value, last_fcf, wacc):
     
     return growth_rate
 
-def generate_excel(ticker, type):
-
-    try: 
-        with open(f'{ticker}_financials.json', 'r') as file:
-            data = json.load(file)
-    except:
-        main(ticker)
-        with open(f'{ticker}_financials.json', 'r') as file:
-            data = json.load(file)
-
-    income_statement = data['incomeStatement'][0]
-    cash_flow_statement = data['cashFlowStatement'][0]
-    balance_sheet = data['balanceSheet'][0]
-
-    wb = openpyxl.load_workbook('template.xlsx')
-    ws = wb.active
-        
-    debt = balance_sheet['Total Debt']
-    cash = balance_sheet['Cash And Cash Equivalents']
-    shares = income_statement['Basic Average Shares']
-
-    ws["U17"] = debt/1000000
-    ws["U15"] = cash/1000000
-    ws["U21"] = shares/1000000
-
-    rev = income_statement['Total Revenue']
-    cogs = income_statement['Cost Of Revenue']
-    operating_expense = income_statement['Operating Expense']
-    other_expense = income_statement['Net Interest Income']
-    tax = income_statement['Tax Provision']
-
-    # Use .get() method with default value of 0 to handle None or missing keys
-    div = income_statement.get("Preferred Stock Dividends", 0) or 0
-    div += income_statement.get('Otherunder Preferred Stock Dividend', 0) or 0
-
-    ws["C2"] = rev/1000000
-    ws["C4"] = cogs/1000000
-    ws["C10"] = operating_expense/1000000
-    ws["C16"] = other_expense/1000000
-    ws["C21"] = tax/1000000
-    ws["C25"] = div/1000000
-
-    lis = wacc_no_print(ticker)    
-    wacc = lis[0]
-    cost_of_equity = lis[1]
-    cost_of_debt = lis[2]
-    weight_of_equity = lis[3]
-    weight_of_debt = lis[4]
-
-    ws["U10"] = wacc/100
-    ws["U8"] = weight_of_equity
-    ws["U6"] = weight_of_debt
-    ws["U2"] = cost_of_equity/100
-    ws["U4"] = cost_of_debt/100
-
-    ws["L6"] = cash_flow_statement['Change In Working Capital']/1000000
-    ws["L10"] = cash_flow_statement['Capital Expenditure']/1000000
-
-    ws["L12"] = cash_flow_statement['Free Cash Flow']/1000000 - div/1000000
-
-    ws["L4"] = cash_flow_statement['Operating Cash Flow']/1000000 - cash_flow_statement['Change In Working Capital']/1000000 - income_statement['Net Income']/1000000
-
-    ws["Q16"] = discount_factor(wacc/100, 5)
-    ws["P16"] = discount_factor(wacc/100, 4)
-    ws["O16"] = discount_factor(wacc/100, 3)
-    ws["N16"] = discount_factor(wacc/100, 2)
-    ws["M16"] = discount_factor(wacc/100, 1)
-
-    # Save the workbook    
-    if (type == "default"):
-        wb.save(f'{ticker}_financial_model.xlsx')
-        return
-    elif(type == "expectation"):
-        stock = yf.Ticker(ticker)
-        price_to_fcf = None
-        cap = stock.info.get('marketCap', None)
-        marketcap = cap
-    
-        # Get free cash flow from cash flow statement
-        cash_flow = stock.cashflow
-        if not cash_flow.empty and 'Free Cash Flow' in cash_flow.index:
-            # Get the most recent free cash flow (first column)
-            fcf = cash_flow.loc['Free Cash Flow'].iloc[0]
-            
-            # If FCF is positive and we have market cap, calculate ratio
-            if fcf and fcf > 0 and cap:
-                price_to_fcf = cap / fcf
-
-        ws["M18"] = (fcf * ws["M16"].value)/1000000
-
-        yearone = (price_to_fcf/200) + 1
-        ws["D3"] = yearone
-        ws["D5"] = yearone
-        ws["D11"] = yearone
-        ws["C22"] = tax/income_statement['Pretax Income']
-        tax_rate = tax/income_statement['Pretax Income']
-        ws["D22"] = tax_rate
-        ws["E22"] = tax_rate
-        ws["F22"] = tax_rate
-        ws["G22"] = tax_rate
-        ws["H22"] = tax_rate
-        ws["M5"] = yearone
-        ws["M7"] = yearone
-        ws["M11"] = yearone
-
-        ws["D3"].number_format = '0.00'
-        ws["D5"].number_format = '0.00'
-        ws["D11"].number_format = '0.00'
-        ws["M5"].number_format = '0.00'
-        ws["M7"].number_format = '0.00'
-        ws["M11"].number_format = '0.00'
-
-        fcf = fcf * yearone 
-
-        ws["N18"] = (fcf * ws["N16"].value)/1000000
-
-        cap = cap * (1 + wacc/100)
-        pfcftwo = cap / fcf
-        yeartwo = (pfcftwo/200) + 1
-        ws["E3"] = yeartwo
-        ws["E5"] = yeartwo
-        ws["E11"] = yeartwo
-        ws["N5"] = yeartwo
-        ws["N7"] = yeartwo
-        ws["N11"] = yeartwo
-
-        ws["E3"].number_format = '0.00'
-        ws["E5"].number_format = '0.00'
-        ws["E11"].number_format = '0.00'
-        ws["N5"].number_format = '0.00'
-        ws["N7"].number_format = '0.00'
-        ws["N11"].number_format = '0.00'
-
-        fcf = fcf * yeartwo
-
-        ws["O18"] = (fcf * ws["O16"].value)/1000000
-
-        cap = cap * (1 + wacc/100)
-        pfcfthree = cap / fcf
-        yearthree = (pfcfthree/200) + 1
-        ws["F3"] = yearthree
-        ws["F5"] = yearthree
-        ws["F11"] = yearthree
-        ws["O5"] = yearthree
-        ws["O7"] = yearthree
-        ws["O11"] = yearthree
-
-        ws["F3"].number_format = '0.00'
-        ws["F5"].number_format = '0.00'
-        ws["F11"].number_format = '0.00'
-        ws["O5"].number_format = '0.00'
-        ws["O7"].number_format = '0.00'
-        ws["O11"].number_format = '0.00'
-
-        fcf = fcf * yearthree
-        ws["P18"] = (fcf * ws["P16"].value)/1000000
-        cap = cap * (1 + wacc/100)
-        pfcffour = cap / fcf
-        yearfour = (pfcffour/200) + 1
-        ws["G3"] = yearfour
-        ws["G5"] = yearfour
-        ws["G11"] = yearfour
-        ws["P5"] = yearfour
-        ws["P7"] = yearfour
-        ws["P11"] = yearfour
-
-        ws["P11"].number_format = '0.00'
-        ws["G3"].number_format = '0.00'
-        ws["G5"].number_format = '0.00'
-        ws["G11"].number_format = '0.00'
-        ws["P5"].number_format = '0.00'
-        ws["P7"].number_format = '0.00'
-
-        fcf = fcf * yearfour
-        ws["Q18"] = (fcf * ws["Q16"].value)/1000000
-        cap = cap * (1 + wacc/100)
-        pfcffive = cap / fcf
-        yearfive = (pfcffive/200) + 1
-        ws["H3"] = yearfive
-        ws["H5"] = yearfive
-        ws["H11"] = yearfive
-        ws["Q5"] = yearfive
-        ws["Q7"] = yearfive
-        ws["Q11"] = yearfive
-
-        ws["H3"].number_format = '0.00'
-        ws["H5"].number_format = '0.00'
-        ws["H11"].number_format = '0.00'
-        ws["Q5"].number_format = '0.00'
-        ws["Q7"].number_format = '0.00'
-        ws["Q11"].number_format = '0.00'
-
-        # subtracting too much need to account for quaters that have already happened
-        TV = (marketcap/1000000) - (ws["M18"].value + ws["N18"].value + ws["O18"].value + ws["P18"].value + ws["Q18"].value) - balance_sheet['Cash And Cash Equivalents']/1000000 + balance_sheet['Total Debt']/1000000
-        ws["Q20"] = TV
-
-        TTV = TV 
-
-        TV = TV*(1 + wacc/100)**5
-
-        ws["K24"] = TV
-        
-        g = calculate_growth_rate(TV*1000000, fcf, wacc/100)
-
-        ws["J25"] = g
-
-        wb.save(f'{ticker}_financial_model.xlsx')
-        return
-
 def discount_factor(rate, period):
     return 1 / ((1 + rate) ** period)
 
@@ -590,6 +377,14 @@ def main(command):
     cap = info.get('marketCap', None)
     global current_price
     current_price = stock.info.get("currentPrice")
+
+
+@app.route('/', methods = ['POST', 'GET'])
+def index():
+    if request.method == 'POST':
+        pass
+    else:
+        pass 
 
 if __name__ == "__main__":
     with app.app_context():

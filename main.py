@@ -50,20 +50,20 @@ def get_income_statement(ticker):
     
     # Common income statement line items
     income_items = {
-        'Revenues': 'us-gaap:Revenues',
-        'Revenue': 'us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax',
-        'Cost of Revenue': 'us-gaap:CostOfRevenue',
-        'Gross Profit': 'us-gaap:GrossProfit',
-        'Operating Expenses': 'us-gaap:OperatingExpenses',
-        'Operating Income': 'us-gaap:OperatingIncomeLoss',
-        'Interest Expense': 'us-gaap:InterestExpense',
-        'Income Before Tax': 'us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest',
-        'Income Tax Expense': 'us-gaap:IncomeTaxExpenseBenefit',
-        'Net Income': 'us-gaap:NetIncomeLoss',
-        'EPS Basic': 'us-gaap:EarningsPerShareBasic',
-        'EPS Diluted': 'us-gaap:EarningsPerShareDiluted'
+        'revenue': 'us-gaap:Revenues',
+        'revenue': 'us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax',
+        'cost_of_revenue': 'us-gaap:CostOfRevenue',
+        'gross_profit': 'us-gaap:GrossProfit',
+        'operating_expenses': 'us-gaap:OperatingExpenses',
+        'operating_income': 'us-gaap:OperatingIncomeLoss',
+        'interest_expense': 'us-gaap:InterestExpense',
+        'income_before_tax': 'us-gaap:IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest',
+        'income_tax_expense': 'us-gaap:IncomeTaxExpenseBenefit',
+        'net_income': 'us-gaap:NetIncomeLoss',
+        'eps': 'us-gaap:EarningsPerShareBasic',
+        'diluted_eps': 'us-gaap:EarningsPerShareDiluted'
     }
-    
+
     facts = data.get('facts', {}).get('us-gaap', {})
     
     print("\nLATEST INCOME STATEMENT")

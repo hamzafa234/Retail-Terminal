@@ -30,11 +30,14 @@ def get_company_cik(ticker):
 def get_income_statement(ticker):
     """Fetch and print the latest income statement for a company."""
     headers = {
-        'User-Agent': 'Hamza Fahad hamzafa234@gmail.com'
+        'User-Agent': 'MyCompany contact@example.com'
     }
     
     # Get CIK
     cik = get_company_cik(ticker)
+    print(f"Company: {ticker}")
+    print(f"CIK: {cik}")
+    print("-" * 80)
     
     # Get company facts (financial data)
     url = f"https://data.sec.gov/api/xbrl/companyfacts/CIK{cik}.json"
@@ -90,8 +93,7 @@ def get_income_statement(ticker):
                     
                     income_data[label] = {
                         'value': latest.get('val'),
-                        'end_date': latest.get('end'),
-                        'form': latest.get('form')
+                        'end_date': latest.get('end')
                     }
             elif 'USD/shares' in units:
                 # For EPS data
@@ -102,15 +104,13 @@ def get_income_statement(ticker):
                     latest = annual_values[0]
                     income_data[label] = {
                         'value': latest.get('val'),
-                        'end_date': latest.get('end'),
-                        'form': latest.get('form')
+                        'end_date': latest.get('end')
                     }
     
     # Print the income statement
     if income_data:
         first_item = list(income_data.values())[0]
         print(f"Period Ending: {first_item['end_date']}")
-        print(f"Filing Type: {first_item['form']}")
         print("-" * 80)
         
         for label, data in income_data.items():
@@ -135,7 +135,3 @@ if __name__ == "__main__":
         get_income_statement(ticker)
     except Exception as e:
         print(f"Error: {e}")
-        print("\nMake sure to:")
-        print("1. Use a valid stock ticker")
-        print("2. Update the User-Agent header with your contact info")
-        print("3. Have an internet connection")

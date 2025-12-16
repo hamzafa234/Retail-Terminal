@@ -166,7 +166,7 @@ def get_company_financials(ticker: str, years: int = 5) -> Optional[List[Dict]]:
 
 
 
-def insert_multiple_income_statements(data_list: List[Dict[str, Any]]):
+def insert_multiple_statements(data_list: List[Dict[str, Any]], type):
     """
     Connects to the PostgreSQL database and inserts multiple entries
     into the income_statement table using execute_values for efficiency.
@@ -201,9 +201,16 @@ def insert_multiple_income_statements(data_list: List[Dict[str, Any]]):
         column_identifiers = sql.SQL(', ').join(map(sql.Identifier, columns))
         
         # Define the target table
-        table_name = sql.Identifier('income_statement')
+        if type == "income":
+            table_name = sql.Identifier('income_statement')
+        elif type == "cash":
+            table_name = sql.Identifier('cashflow_statement')
+        elif type == "balance":
+            table_name = sql.Identifier('balance_sheet')
+        else:
+            raise ValueError(f"Invalid statement type: {type}. Must be 'income', 'cash', or 'balance'.")# 3. Execute the Batch Insert using execute_values
 
-        # 3. Execute the Batch Insert using execute_values
+
         # This function constructs a single, optimized INSERT INTO ... VALUES (), (), ... statement.
         print(f"⏳ Attempting to insert {len(list_of_tuples)} records...")
         extras.execute_values(
@@ -235,52 +242,6 @@ def insert_multiple_income_statements(data_list: List[Dict[str, Any]]):
             conn.close()
             print("Connection closed.")
 
-def getsample():
-    
-    sample_one = {
-        'statement_date': date(2025, 12, 31),
-        'revenue': 1000000,
-        'cost_of_revenue': 400000,
-        'gross_profit': 600000,
-        'operating_expenses': 300000,
-        'research_development': 100000,
-        'selling_general_administrative': 200000,
-        'operating_income': 300000,
-        'interest_expense': 10000,
-        'interest_income': 5000,
-        'other_income_expense': 0,
-        'income_before_tax': 295000,
-        'income_tax_expense': 60000,
-        'net_income': 235000,
-        'eps': 2.35,
-        'diluted_eps': 2.30,
-        'shares_outstanding': 100000,
-        'diluted_shares_outstanding': 102000
-    }
-    
-    sample_two = {
-        'statement_date': date(2025, 9, 30), # Corrected date from 31 to 30
-        'revenue': 100000,
-        'cost_of_revenue': 40000,
-        'gross_profit': 60000,
-        'operating_expenses': 30000,
-        'research_development': 10000,
-        'selling_general_administrative': 20000,
-        'operating_income': 30000,
-        'interest_expense': 1000,
-        'interest_income': 500,
-        'other_income_expense': 0,
-        'income_before_tax': 29500,
-        'income_tax_expense': 6000,
-        'net_income': 23500,
-        'eps': 2.5,
-        'diluted_eps': 2.0,
-        'shares_outstanding': 110000,
-        'diluted_shares_outstanding': 101000
-    }
-
-    all_sample_data = [sample_one, sample_two, sample_three]
-    return all_sample_data
 
 
 if __name__ == "__main__":
@@ -288,6 +249,4 @@ if __name__ == "__main__":
 
     all_data = get_company_financials(ticker, years=5)
 
-
-
-    insert_multiple_income_statements(all_data)
+    insert_multiple_statements(all_data, "income")

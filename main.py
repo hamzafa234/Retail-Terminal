@@ -11,47 +11,9 @@ from datetime import datetime, timedelta
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = "517186" 
+DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
-
-
-def get_treasury_yield(date_str, max_days_forward=7):
-    """
-    Get the 10-year Treasury yield at market close for a specific date.
-    If no data is available (market closed), tries the next closest day.
-    
-    Args:
-        date_str (str): Date in 'YYYY-MM-DD' format
-        max_days_forward (int): Maximum number of days to search forward (default: 7)
-        
-    Returns:
-        float: The closing yield as a percentage, or None if no data available
-    """
-    try:
-        ticker = yf.Ticker("^TNX")
-        target_date = datetime.strptime(date_str, '%Y-%m-%d')
-        
-        # Try to get data for the target date and up to max_days_forward
-        for days_offset in range(max_days_forward + 1):
-            search_date = target_date + timedelta(days=days_offset)
-            start_date = search_date.strftime('%Y-%m-%d')
-            end_date = (search_date + timedelta(days=1)).strftime('%Y-%m-%d')
-            
-            # Get historical data
-            historical_data = ticker.history(start=start_date, end=end_date)
-            
-            if not historical_data.empty:
-                yield_value = historical_data['Close'].iloc[0]
-                actual_date = historical_data.index[0].strftime('%Y-%m-%d')
-                
-                return yield_value
-        
-        # If we've searched all days and found nothing
-        return None
-            
-    except Exception as e:
-        return None
 
 def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
@@ -352,30 +314,29 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
         print(f"Error processing data: {e}")
         return None
 
+
 def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
     """
     Connects to the PostgreSQL database and inserts multiple entries
-    into the income_statement table using execute_values for efficiency.
+    into the appropriate financial statement table using execute_values for efficiency.
+    Also inserts corresponding statement_date entries into the calc table.
     """
     conn = None
     try:
         conn = psycopg2.connect(
-            dbname="fin_data",
-            user="hamzafahad",
-            password="517186",
-            host="localhost",
-            port=""
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
         )
         cur = conn.cursor()
-
         if not data_list:
             print("Input list is empty. No data to insert.")
             return
-
         columns = data_list[0].keys()
         
         list_of_tuples = [tuple(data[col] for col in columns) for data in data_list]
-
         column_identifiers = sql.SQL(', ').join(map(sql.Identifier, columns))
         
         if type == "income":
@@ -384,28 +345,33 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
             table_name = sql.Identifier('cashflow_statement')
         elif type == "balance":
             table_name = sql.Identifier('balance_sheet')
-
-
-        print(f"⏳ Attempting to insert {len(list_of_tuples)} records...")
+        
+        print(f"Attempting to insert {len(list_of_tuples)} records...")
+        
+        # Insert into the main statement table
         extras.execute_values(
             cur,
             sql.SQL("INSERT INTO {} ({}) VALUES %s").format(
                 table_name, 
                 column_identifiers
-            ),
+                ),
             list_of_tuples,
-            page_size=1000  # Optimal page size for large inserts
+            page_size=1000  
         )
-
+        
+        # Extract statement_date values and insert into calc table
+        statement_dates = [data['statement_date'] for data in data_list if 'statement_date' in data]
+        
         conn.commit()
-        print(f" Successfully inserted {len(list_of_tuples)} sample entries into {type}statement.")
-
+        print(f"Successfully inserted {len(list_of_tuples)} sample entries into {type}_statement.")
+        return statement_dates 
+        
     except psycopg2.Error as e:
-        print(f" Database Error: {e}")
+        print(f"Database Error: {e}")
         if conn:
             conn.rollback()
     except Exception as e:
-        print(f" An unexpected error occurred: {e}")
+        print(f"An unexpected error occurred: {e}")
     finally:
         if conn:
             if 'cur' in locals() and cur:
@@ -413,14 +379,60 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
             conn.close()
             print("Connection closed.")
 
+def cleardatabase():
 
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    cursor = conn.cursor()
+
+    tables = ['calc', 'income_statement', 'cashflow_statement', 'balance_sheet']
+
+    for table in tables:
+        cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE;")
+
+    conn.commit()
+    cursor.close()
+    conn.close()
+
+
+def add_data_to_calc(statement_dates: list):
+    
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    cur = conn.cursor()
+    
+    extras.execute_values(
+        cur,
+        sql.SQL("""
+            INSERT INTO calc (statement_date) 
+            VALUES %s 
+            ON CONFLICT (statement_date) DO NOTHING
+        """),
+        [(date,) for date in statement_dates],
+        page_size=1000
+        )
+    conn.commit()
+    print("entered info into calc table")
 
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 
+    cleardatabase()
 
     all_income_data = get_comp_fin(ticker, "income", years=5)
     insert_multiple_statements(all_income_data, "income")
     all_cash_data = get_comp_fin(ticker, "cashflow", years=5)
     insert_multiple_statements(all_cash_data, "cashflow")
     all_balance_data = get_comp_fin(ticker, "balance", years=5)
-    insert_multiple_statements(all_balance_data, "balance")
+    dates = insert_multiple_statements(all_balance_data, "balance")
+    add_data_to_calc(dates)
+

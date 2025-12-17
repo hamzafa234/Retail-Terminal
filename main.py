@@ -43,8 +43,9 @@ def get_treasury_yield(date_str, max_days_forward=7):
             
             if not historical_data.empty:
                 yield_value = historical_data['Close'].iloc[0]
-                actual_date = historical_data.index[0].strftime('%Y-%m-%d')
-                
+                yield_value = round(yield_value, 3)
+
+
                 return yield_value
         
         # If we've searched all days and found nothing
@@ -352,10 +353,12 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
         print(f"Error processing data: {e}")
         return None
 
+
 def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
     """
     Connects to the PostgreSQL database and inserts multiple entries
-    into the income_statement table using execute_values for efficiency.
+    into the appropriate financial statement table using execute_values for efficiency.
+    Also inserts corresponding statement_date entries into the calc table.
     """
     conn = None
     try:
@@ -367,15 +370,12 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
             port=DB_PORT
         )
         cur = conn.cursor()
-
         if not data_list:
             print("Input list is empty. No data to insert.")
             return
-
         columns = data_list[0].keys()
         
         list_of_tuples = [tuple(data[col] for col in columns) for data in data_list]
-
         column_identifiers = sql.SQL(', ').join(map(sql.Identifier, columns))
         
         if type == "income":
@@ -384,28 +384,46 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
             table_name = sql.Identifier('cashflow_statement')
         elif type == "balance":
             table_name = sql.Identifier('balance_sheet')
-
-
-        print(f"⏳ Attempting to insert {len(list_of_tuples)} records...")
+        
+        print(f"Attempting to insert {len(list_of_tuples)} records...")
+        
+        # Insert into the main statement table
         extras.execute_values(
             cur,
             sql.SQL("INSERT INTO {} ({}) VALUES %s").format(
                 table_name, 
                 column_identifiers
-            ),
+                ),
             list_of_tuples,
-            page_size=1000  # Optimal page size for large inserts
+            page_size=1000  
         )
-
+        
+        # Extract statement_date values and insert into calc table
+        # Assuming 'statement_date' is one of the columns
+        if type == "balance":
+            statement_dates = [data['statement_date'] for data in data_list if 'statement_date' in data]
+            extras.execute_values(
+                cur,
+                sql.SQL("""
+                    INSERT INTO calc (statement_date) 
+                    VALUES %s 
+                    ON CONFLICT (statement_date) DO NOTHING
+                """),
+                [(date,) for date in statement_dates],
+                page_size=1000
+            )
+            print(f"Inserted/updated {len(statement_dates)} dates in calc table.")
+        
         conn.commit()
-        print(f" Successfully inserted {len(list_of_tuples)} sample entries into {type}statement.")
-
+        print(f"Successfully inserted {len(list_of_tuples)} sample entries into {type}_statement.")
+        return list_of_tuples[0] 
+        
     except psycopg2.Error as e:
-        print(f" Database Error: {e}")
+        print(f"Database Error: {e}")
         if conn:
             conn.rollback()
     except Exception as e:
-        print(f" An unexpected error occurred: {e}")
+        print(f"An unexpected error occurred: {e}")
     finally:
         if conn:
             if 'cur' in locals() and cur:
@@ -443,4 +461,5 @@ if __name__ == "__main__":
     all_cash_data = get_comp_fin(ticker, "cashflow", years=5)
     insert_multiple_statements(all_cash_data, "cashflow")
     all_balance_data = get_comp_fin(ticker, "balance", years=5)
-    insert_multiple_statements(all_balance_data, "balance")
+    dates = insert_multiple_statements(all_balance_data, "balance")
+

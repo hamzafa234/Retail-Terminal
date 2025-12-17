@@ -399,24 +399,11 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
         )
         
         # Extract statement_date values and insert into calc table
-        # Assuming 'statement_date' is one of the columns
-        if type == "balance":
-            statement_dates = [data['statement_date'] for data in data_list if 'statement_date' in data]
-            extras.execute_values(
-                cur,
-                sql.SQL("""
-                    INSERT INTO calc (statement_date) 
-                    VALUES %s 
-                    ON CONFLICT (statement_date) DO NOTHING
-                """),
-                [(date,) for date in statement_dates],
-                page_size=1000
-            )
-            print(f"Inserted/updated {len(statement_dates)} dates in calc table.")
+        statement_dates = [data['statement_date'] for data in data_list if 'statement_date' in data]
         
         conn.commit()
         print(f"Successfully inserted {len(list_of_tuples)} sample entries into {type}_statement.")
-        return list_of_tuples[0] 
+        return statement_dates 
         
     except psycopg2.Error as e:
         print(f"Database Error: {e}")
@@ -452,6 +439,30 @@ def cleardatabase():
     conn.close()
 
 
+def add_data_to_calc(statement_dates: list):
+    
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    cur = conn.cursor()
+    
+    extras.execute_values(
+        cur,
+        sql.SQL("""
+            INSERT INTO calc (statement_date) 
+            VALUES %s 
+            ON CONFLICT (statement_date) DO NOTHING
+        """),
+        [(date,) for date in statement_dates],
+        page_size=1000
+        )
+    conn.commit()
+    print("entered info into calc table")
+
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 
     cleardatabase()
@@ -462,4 +473,5 @@ if __name__ == "__main__":
     insert_multiple_statements(all_cash_data, "cashflow")
     all_balance_data = get_comp_fin(ticker, "balance", years=5)
     dates = insert_multiple_statements(all_balance_data, "balance")
+    add_data_to_calc(dates)
 

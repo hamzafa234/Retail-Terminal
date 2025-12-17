@@ -16,7 +16,7 @@ DB_HOST = "localhost"
 DB_PORT = "5432"
 
 
-def get_company_financials(ticker: str, years: int = 5) -> Optional[List[Dict]]:
+def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
     Fetch quarterly financial data for a company from SEC EDGAR API.
     
@@ -85,23 +85,25 @@ def get_company_financials(ticker: str, years: int = 5) -> Optional[List[Dict]]:
             return []
         
         # Get all concepts
-        revenue_values = get_quarterly_values('Revenue') or get_quarterly_values('RevenueFromContractWithCustomerExcludingAssessedTax')
-        cost_values = get_quarterly_values('CostOfRevenue')
-        gross_profit_values = get_quarterly_values('GrossProfit')
-        operating_expenses_values = get_quarterly_values('OperatingExpenses')
-        rd_values = get_quarterly_values('ResearchAndDevelopmentExpense')
-        sga_values = get_quarterly_values('SellingGeneralAndAdministrativeExpense')
-        operating_income_values = get_quarterly_values('OperatingIncomeLoss')
-        interest_expense_values = get_quarterly_values('InterestExpense')
-        interest_income_values = get_quarterly_values('InterestIncomeOther') or get_quarterly_values('InterestIncome')
-        other_income_values = get_quarterly_values('OtherNonoperatingIncomeExpense')
-        income_before_tax_values = get_quarterly_values('IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest')
-        tax_values = get_quarterly_values('IncomeTaxExpenseBenefit')
-        net_income_values = get_quarterly_values('NetIncomeLoss')
-        eps_values = get_quarterly_values('EarningsPerShareBasic')
-        diluted_eps_values = get_quarterly_values('EarningsPerShareDiluted')
-        shares_values = get_quarterly_values('WeightedAverageNumberOfSharesOutstandingBasic')
-        diluted_shares_values = get_quarterly_values('WeightedAverageNumberOfDilutedSharesOutstanding')
+        
+        if type == "income":
+            revenue_values = get_quarterly_values('Revenue') or get_quarterly_values('RevenueFromContractWithCustomerExcludingAssessedTax')
+            cost_values = get_quarterly_values('CostOfRevenue')
+            gross_profit_values = get_quarterly_values('GrossProfit')
+            operating_expenses_values = get_quarterly_values('OperatingExpenses')
+            rd_values = get_quarterly_values('ResearchAndDevelopmentExpense')
+            sga_values = get_quarterly_values('SellingGeneralAndAdministrativeExpense')
+            operating_income_values = get_quarterly_values('OperatingIncomeLoss')
+            interest_expense_values = get_quarterly_values('InterestExpense')
+            interest_income_values = get_quarterly_values('InterestIncomeOther') or get_quarterly_values('InterestIncome')
+            other_income_values = get_quarterly_values('OtherNonoperatingIncomeExpense')
+            income_before_tax_values = get_quarterly_values('IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest')
+            tax_values = get_quarterly_values('IncomeTaxExpenseBenefit')
+            net_income_values = get_quarterly_values('NetIncomeLoss')
+            eps_values = get_quarterly_values('EarningsPerShareBasic')
+            diluted_eps_values = get_quarterly_values('EarningsPerShareDiluted')
+            shares_values = get_quarterly_values('WeightedAverageNumberOfSharesOutstandingBasic')
+            diluted_shares_values = get_quarterly_values('WeightedAverageNumberOfDilutedSharesOutstanding')
         
         # Create a dictionary to store all quarters
         quarters_dict = {}
@@ -113,25 +115,27 @@ def get_company_financials(ticker: str, years: int = 5) -> Optional[List[Dict]]:
                 if end_date not in quarters_dict:
                     quarters_dict[end_date] = {'statement_date': datetime.strptime(end_date, '%Y-%m-%d').date()}
                 quarters_dict[end_date][field_name] = item['val']
-        
+       
+
+        if type == "income":
         # Populate the quarters dictionary
-        add_to_quarters(revenue_values, 'revenue')
-        add_to_quarters(cost_values, 'cost_of_revenue')
-        add_to_quarters(gross_profit_values, 'gross_profit')
-        add_to_quarters(operating_expenses_values, 'operating_expenses')
-        add_to_quarters(rd_values, 'research_development')
-        add_to_quarters(sga_values, 'selling_general_administrative')
-        add_to_quarters(operating_income_values, 'operating_income')
-        add_to_quarters(interest_expense_values, 'interest_expense')
-        add_to_quarters(interest_income_values, 'interest_income')
-        add_to_quarters(other_income_values, 'other_income_expense')
-        add_to_quarters(income_before_tax_values, 'income_before_tax')
-        add_to_quarters(tax_values, 'income_tax_expense')
-        add_to_quarters(net_income_values, 'net_income')
-        add_to_quarters(eps_values, 'eps')
-        add_to_quarters(diluted_eps_values, 'diluted_eps')
-        add_to_quarters(shares_values, 'shares_outstanding')
-        add_to_quarters(diluted_shares_values, 'diluted_shares_outstanding')
+            add_to_quarters(revenue_values, 'revenue')
+            add_to_quarters(cost_values, 'cost_of_revenue')
+            add_to_quarters(gross_profit_values, 'gross_profit')
+            add_to_quarters(operating_expenses_values, 'operating_expenses')
+            add_to_quarters(rd_values, 'research_development')
+            add_to_quarters(sga_values, 'selling_general_administrative')
+            add_to_quarters(operating_income_values, 'operating_income')
+            add_to_quarters(interest_expense_values, 'interest_expense')
+            add_to_quarters(interest_income_values, 'interest_income')
+            add_to_quarters(other_income_values, 'other_income_expense')
+            add_to_quarters(income_before_tax_values, 'income_before_tax')
+            add_to_quarters(tax_values, 'income_tax_expense')
+            add_to_quarters(net_income_values, 'net_income')
+            add_to_quarters(eps_values, 'eps')
+            add_to_quarters(diluted_eps_values, 'diluted_eps')
+            add_to_quarters(shares_values, 'shares_outstanding')
+            add_to_quarters(diluted_shares_values, 'diluted_shares_outstanding')
         
         # Convert to list and sort by date (most recent first)
         result_list = sorted(quarters_dict.values(), key=lambda x: x['statement_date'], reverse=True)
@@ -141,14 +145,15 @@ def get_company_financials(ticker: str, years: int = 5) -> Optional[List[Dict]]:
         result_list = [q for q in result_list if q['statement_date'] >= cutoff_date]
         
         # Ensure all fields are present (set to None if missing)
-        required_fields = [
-            'statement_date', 'revenue', 'cost_of_revenue', 'gross_profit', 
-            'operating_expenses', 'research_development', 'selling_general_administrative',
-            'operating_income', 'interest_expense', 'interest_income', 
-            'other_income_expense', 'income_before_tax', 'income_tax_expense',
-            'net_income', 'eps', 'diluted_eps', 'shares_outstanding', 
-            'diluted_shares_outstanding'
-        ]
+        if type == "income":    
+            required_fields = [
+                'statement_date', 'revenue', 'cost_of_revenue', 'gross_profit', 
+                'operating_expenses', 'research_development', 'selling_general_administrative',
+                'operating_income', 'interest_expense', 'interest_income', 
+                'other_income_expense', 'income_before_tax', 'income_tax_expense',
+                'net_income', 'eps', 'diluted_eps', 'shares_outstanding', 
+                'diluted_shares_outstanding'
+            ]
         
         for quarter in result_list:
             for field in required_fields:
@@ -166,7 +171,7 @@ def get_company_financials(ticker: str, years: int = 5) -> Optional[List[Dict]]:
 
 
 
-def insert_multiple_statements(data_list: List[Dict[str, Any]], type):
+def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
     """
     Connects to the PostgreSQL database and inserts multiple entries
     into the income_statement table using execute_values for efficiency.
@@ -247,6 +252,6 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type):
 if __name__ == "__main__":
     ticker = "AAPL"
 
-    all_data = get_company_financials(ticker, years=5)
+    all_income_data = get_comp_fin(ticker, "income", years=5)
 
-    insert_multiple_statements(all_data, "income")
+    insert_multiple_statements(all_income_data, "income")

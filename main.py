@@ -429,8 +429,11 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
 
 
 if __name__ == "__main__":
-    ticker = "AAPL"
+    ticker = input("Enter a Company Ticker: ").strip().upper() 
 
-    all_income_data = get_comp_fin(ticker, "cashflow", years=5)
-
-    insert_multiple_statements(all_income_data, "cashflow")
+    all_income_data = get_comp_fin(ticker, "income", years=5)
+    insert_multiple_statements(all_income_data, "income")
+    all_cash_data = get_comp_fin(ticker, "cashflow", years=5)
+    insert_multiple_statements(all_cash_data, "cashflow")
+    all_balance_data = get_comp_fin(ticker, "balance", years=5)
+    insert_multiple_statements(all_balance_data, "balance")

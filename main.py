@@ -15,45 +15,6 @@ DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
-
-def get_treasury_yield(date_str, max_days_forward=7):
-    """
-    Get the 10-year Treasury yield at market close for a specific date.
-    If no data is available (market closed), tries the next closest day.
-    
-    Args:
-        date_str (str): Date in 'YYYY-MM-DD' format
-        max_days_forward (int): Maximum number of days to search forward (default: 7)
-        
-    Returns:
-        float: The closing yield as a percentage, or None if no data available
-    """
-    try:
-        ticker = yf.Ticker("^TNX")
-        target_date = datetime.strptime(date_str, '%Y-%m-%d')
-        
-        # Try to get data for the target date and up to max_days_forward
-        for days_offset in range(max_days_forward + 1):
-            search_date = target_date + timedelta(days=days_offset)
-            start_date = search_date.strftime('%Y-%m-%d')
-            end_date = (search_date + timedelta(days=1)).strftime('%Y-%m-%d')
-            
-            # Get historical data
-            historical_data = ticker.history(start=start_date, end=end_date)
-            
-            if not historical_data.empty:
-                yield_value = historical_data['Close'].iloc[0]
-                yield_value = round(yield_value, 3)
-
-
-                return yield_value
-        
-        # If we've searched all days and found nothing
-        return None
-            
-    except Exception as e:
-        return None
-
 def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
     Fetch quarterly financial data for a company from SEC EDGAR API.

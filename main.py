@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = "517186" 
+DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -360,11 +360,11 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
     conn = None
     try:
         conn = psycopg2.connect(
-            dbname="fin_data",
-            user="hamzafahad",
-            password="517186",
-            host="localhost",
-            port=""
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
         )
         cur = conn.cursor()
 
@@ -413,10 +413,30 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
             conn.close()
             print("Connection closed.")
 
+def cleardatabase():
+
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    cursor = conn.cursor()
+
+    tables = ['calc', 'income_statement', 'cashflow_statement', 'balance_sheet']
+
+    for table in tables:
+        cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE;")
+
+    conn.commit()
+    cursor.close()
+    conn.close()
 
 
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 
+    cleardatabase()
 
     all_income_data = get_comp_fin(ticker, "income", years=5)
     insert_multiple_statements(all_income_data, "income")

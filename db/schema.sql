@@ -14,7 +14,7 @@ create table calc (
     enterprise_value bigint,
     wacc decimal(10, 4),
     insider_activity bigint,
-    unique(statement_date)
+    unique(statement_date),
     riskfreerate decimal(10, 4)
 );
 

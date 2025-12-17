@@ -7,11 +7,9 @@ from datetime import datetime
 from typing import List, Dict, Optional
 
 # --- Database Connection Details ---
-# **NOTE:** Replace these placeholders with your actual database credentials
-# IMPORTANT: Ensure 'fin_data' database and 'income_statement' table exist.
 DB_NAME = "fin_data"
-DB_USER = "hamzafahad"       # e.g., 'postgres'
-DB_PASSWORD = "" # Your password
+DB_USER = "hamzafahad"
+DB_PASSWORD = "517186" 
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -30,13 +28,10 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
         List of dictionaries with quarterly financial statement data, sorted by date (most recent first)
     """
     
-    # SEC EDGAR API endpoint for company facts
     base_url = "https://data.sec.gov/api/xbrl/companyfacts"
-    
-    # Get CIK number from ticker
     ticker = ticker.upper().strip()
     
-    # User agent is required by SEC
+    # User agent is required by SEC API
     headers = {
         'User-Agent': 'Hamza_Fahad hamzafa234@gmail.com'  # Replace with your info
     }
@@ -82,27 +77,14 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
             
             units = facts[concept_name].get('units', {})
             
-            # Try USD first, then shares, then USD/shares
-            # For Balance Sheet, we primarily look for the latest period for the 'end' date.
-            # For Cash Flow and Income, we look for 'duration' or 'instant' values.
-            
-            # Use 'USD', 'shares', 'USD/shares' as primary units
             for unit_type in ['USD', 'shares', 'USD/shares']:
                 if unit_type in units:
                     values = units[unit_type]
-                    # Filter for quarterly (10-Q) and annual (10-K) reports.
-                    # Balance sheet items are 'instant' (point in time), Income/Cash Flow are 'duration' (period).
-                    if type == "balance":
-                         # For balance sheet, filter by 'form' and use 'end' date.
-                        quarterly_values = [v for v in values if v.get('form') in ['10-Q', '10-K']]
-                    else:
-                        # For income/cashflow, filter by 'form' and 'fp' (fiscal period)
-                        quarterly_values = [v for v in values if v.get('form') in ['10-Q', '10-K'] and v.get('fp') in ['Q1', 'Q2', 'Q3', 'Q4', 'FY']]
+                    quarterly_values = [v for v in values if v.get('form') in ['10-Q', '10-K'] and v.get('fp') in ['Q1', 'Q2', 'Q3', 'Q4', 'FY']]
                         
                     return quarterly_values
             return []
         
-        # --- Income Statement Concepts (Original Logic) ---
         
         if type == "income":
             revenue_values = get_quarterly_values('Revenue') or get_quarterly_values('RevenueFromContractWithCustomerExcludingAssessedTax')
@@ -123,7 +105,6 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
             shares_values = get_quarterly_values('WeightedAverageNumberOfSharesOutstandingBasic')
             diluted_shares_values = get_quarterly_values('WeightedAverageNumberOfDilutedSharesOutstanding')
             
-        # --- Cash Flow Statement Concepts (New Logic) ---
         
         elif type == "cashflow":
             net_income_values = get_quarterly_values('NetIncomeLoss')
@@ -149,12 +130,6 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
             financing_cash_flow_values = get_quarterly_values('NetCashProvidedByUsedInFinancingActivities')
             net_change_cash_values = get_quarterly_values('CashAndCashEquivalentsPeriodIncreaseDecrease')
             
-            # Free cash flow is a non-GAAP measure, typically not in the facts API directly.
-            # We'll calculate it later if needed, but for now we fetch the components
-            # FCF = OCF - CapEx (We will let the end user calculate it or use a proxy)
-            # free_cash_flow is left blank for now as it's not a direct GAAP concept.
-
-        # --- Balance Sheet Concepts (New Logic) ---
         
         elif type == "balance":
             cash_values = get_quarterly_values('CashAndCashEquivalentsAtCarryingValue')
@@ -190,13 +165,10 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
             total_liabilities_and_equity_values = get_quarterly_values('LiabilitiesAndStockholdersEquity')
 
         
-        # Create a dictionary to store all quarters
         quarters_dict = {}
         
-        # Helper function to add values to quarters_dict
         def add_to_quarters(values_list, field_name):
             for item in values_list:
-                # Use 'end' date for Income/Cash Flow (duration) and Balance Sheet (instant)
                 end_date_str = item['end']
                 
                 if end_date_str not in quarters_dict:
@@ -205,7 +177,6 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
 
         
         if type == "income":
-            # Populate the quarters dictionary for Income Statement
             add_to_quarters(revenue_values, 'revenue')
             add_to_quarters(cost_values, 'cost_of_revenue')
             add_to_quarters(gross_profit_values, 'gross_profit')
@@ -225,7 +196,6 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
             add_to_quarters(diluted_shares_values, 'diluted_shares_outstanding')
 
         elif type == "cashflow":
-            # Populate the quarters dictionary for Cash Flow Statement
             add_to_quarters(net_income_values, 'net_income')
             add_to_quarters(depreciation_values, 'depreciation_amortization')
             add_to_quarters(stock_comp_values, 'stock_based_compensation')
@@ -249,12 +219,10 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
             add_to_quarters(financing_cash_flow_values, 'financing_cash_flow')
             add_to_quarters(net_change_cash_values, 'net_change_cash')
             
-            # Free cash flow will be calculated/filled as None for missing data later
             for date_key in quarters_dict:
-                 quarters_dict[date_key]['free_cash_flow'] = None # Placeholder for now
+                 quarters_dict[date_key]['free_cash_flow'] = None # Placeholder
 
         elif type == "balance":
-            # Populate the quarters dictionary for Balance Sheet
             add_to_quarters(cash_values, 'cash_and_equivalents')
             add_to_quarters(short_term_investments_values, 'short_term_investments')
             add_to_quarters(accounts_receivable_values, 'accounts_receivable')
@@ -293,9 +261,6 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
         cutoff_date = datetime.now().date().replace(year=datetime.now().year - years)
         result_list = [q for q in result_list if q['statement_date'] >= cutoff_date]
         
-        # Ensure all fields are present (set to None if missing)
-        
-        # --- Required Fields Definition ---
         if type == "income":    
             required_fields = [
                 'statement_date', 'revenue', 'cost_of_revenue', 'gross_profit', 
@@ -337,7 +302,6 @@ def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]
         for quarter in result_list:
             for field in required_fields:
                 if field not in quarter:
-                    # 'other_income_expense' should be 0, others should be None
                     default_value = 0 if field == 'other_income_expense' else None
                     quarter[field] = default_value
         
@@ -357,7 +321,6 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
     """
     conn = None
     try:
-        # Connect to the database
         conn = psycopg2.connect(
             dbname="fin_data",
             user="hamzafahad",
@@ -367,35 +330,24 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
         )
         cur = conn.cursor()
 
-        # 1. Prepare Columns and Values for Insertion
-        # We assume all dictionaries have the same keys (column names)
         if not data_list:
-            print("🛑 Input list is empty. No data to insert.")
+            print("Input list is empty. No data to insert.")
             return
 
-        # Get the keys from the first dictionary to define the columns
         columns = data_list[0].keys()
         
-        # Extract the values from each dictionary, ensuring the order matches the columns
-        # This converts the list of dicts into a list of tuples (required by execute_values)
         list_of_tuples = [tuple(data[col] for col in columns) for data in data_list]
 
-        # 2. Build the SQL INSERT statement
-        # Create a comma-separated list of column Identifiers
         column_identifiers = sql.SQL(', ').join(map(sql.Identifier, columns))
         
-        # Define the target table
         if type == "income":
             table_name = sql.Identifier('income_statement')
         elif type == "cashflow":
             table_name = sql.Identifier('cashflow_statement')
         elif type == "balance":
             table_name = sql.Identifier('balance_sheet')
-        else:
-            raise ValueError(f"Invalid statement type: {type}. Must be 'income', 'cash', or 'balance'.")# 3. Execute the Batch Insert using execute_values
 
 
-        # This function constructs a single, optimized INSERT INTO ... VALUES (), (), ... statement.
         print(f"⏳ Attempting to insert {len(list_of_tuples)} records...")
         extras.execute_values(
             cur,
@@ -407,19 +359,16 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
             page_size=1000  # Optimal page size for large inserts
         )
 
-        # Commit the transaction
         conn.commit()
-        print(f"✅ Successfully inserted {len(list_of_tuples)} sample entries into {type}statement.")
+        print(f" Successfully inserted {len(list_of_tuples)} sample entries into {type}statement.")
 
     except psycopg2.Error as e:
-        print(f"❌ Database Error: {e}")
-        # Roll back the transaction in case of an error
+        print(f" Database Error: {e}")
         if conn:
             conn.rollback()
     except Exception as e:
-        print(f"❌ An unexpected error occurred: {e}")
+        print(f" An unexpected error occurred: {e}")
     finally:
-        # Close the connection
         if conn:
             if 'cur' in locals() and cur:
                 cur.close()

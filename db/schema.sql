@@ -3,6 +3,20 @@
 create database fin_data;
 \c fin_data;
 
+
+
+create table calc (
+    id serial primary key,
+    statement_date date not null,
+    beta decimal(10, 4),
+    cost_of_capital decimal(10, 4),
+    market_cap bigint,
+    enterprise_value bigint,
+    wacc decimal(10, 4),
+    insider_activity bigint,
+    unique(statement_date)
+);
+
 -- income statement table
 create table income_statement (
     id serial primary key,
@@ -97,11 +111,4 @@ create table balance_sheet (
 create index idx_income_statement_date on income_statement(statement_date);
 create index idx_cashflow_statement_date on cashflow_statement(statement_date);
 create index idx_balance_sheet_date on balance_sheet(statement_date);
-
--- comments for documentation
-comment on table income_statement is 'stores income statement data for financial periods';
-comment on table cashflow_statement is 'stores cash flow statement data for financial periods';
-comment on table balance_sheet is 'stores balance sheet data for financial periods';
-comment on column income_statement.statement_date is 'date of the financial statement period';
-comment on column cashflow_statement.statement_date is 'date of the financial statement period';
-comment on column balance_sheet.statement_date is 'date of the financial statement period';
+create index idx_calc_date on calc(statement_date);

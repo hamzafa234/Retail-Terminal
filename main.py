@@ -18,6 +18,33 @@ DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
+
+def get_market_status(target_date_str, exchange_name='NYSE'):
+    # 1. Load the exchange calendar
+    try:
+        exchange = mcal.get_calendar(exchange_name)
+    except Exception:
+        return f"Exchange '{exchange_name}' not found."
+
+    # 2. Convert string to a pandas timestamp
+    target_date = pd.Timestamp(target_date_str).tz_localize(None)
+    
+    # 3. Check if the date is a valid session
+    # We look at a small range around the date to verify
+    schedule = exchange.schedule(start_date=target_date, end_date=target_date)
+    
+    if not schedule.empty:
+        return target_date.date()
+    else:
+        # 4. If closed, find the next open day
+        # We search forward up to 10 days (to account for long holidays/weekends)
+        search_end = target_date + timedelta(days=10)
+        future_schedule = exchange.schedule(start_date=target_date, end_date=search_end)
+        
+        if not future_schedule.empty:
+            next_open = future_schedule.index[0].date()
+            return next_open
+
 def get_last_trading_day(exchange_name='NYSE'):
     exchange = mcal.get_calendar(exchange_name)
     
@@ -33,30 +60,32 @@ def get_last_trading_day(exchange_name='NYSE'):
     
     # 3. If closed, return the most recent trading day from the schedule
     # schedule.index contains the list of valid trading dates
-    last_trading_day = schedule.index[-1].date()
+    last_trading_day = schedule.index[-2].date()
     return last_trading_day
 
 
-def get_stock_price_on_date(ticker_symbol: str, target_date: date):
+def get_closing_price(ticker_symbol, target_date):
     """
-    Returns the closing price of a ticker on a specific date.
-    Returns None if the market was closed or data is unavailable.
-    """
-    # yfinance 'end' date is exclusive, so we add one day to the target
-    next_day = target_date + timedelta(days=1)
+    Retrieves the closing price for a specific ticker on a specific date.
     
+    :param ticker_symbol: Stock ticker (e.g., 'AAPL')
+    :param target_date: A datetime.date object
+    :return: Closing price as a float or None
+    """
+    # yfinance expects strings, so we format the date object
+    start_str = target_date.strftime('%Y-%m-%d')
+    
+    # Define end date as the day after (exclusive)
+    end_date = target_date + timedelta(days=1)
+    end_str = end_date.strftime('%Y-%m-%d')
+
     ticker = yf.Ticker(ticker_symbol)
-    
-    # Fetch history for just that one day
-    # We use the start/end format to isolate the specific date
-    hist = ticker.history(start=target_date, end=next_day)
-    
-    if not hist.empty:
-        # Access the 'Close' column for the first (and only) row
-        return hist['Close'].iloc[0]
-    else:
-        print(f"No data for {ticker_symbol} on {target_date}. (Market likely closed)")
-        return None
+    df = ticker.history(start=start_str, end=end_str)
+
+    if not df.empty:
+        return round(float(df['Close'].iloc[0]), 3) 
+    return None
+
 
 def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
@@ -443,10 +472,16 @@ def cleardatabase():
     conn.close()
 
 
-def add_data_to_calc(statement_dates: list):
+def add_data_to_calc(statement_dates: list, ticker: str):
     
     last_day = get_last_trading_day()
     statement_dates.insert(0, last_day)
+
+    pricelist = []
+    for date in statement_dates:
+        date = get_market_status(date)
+        price = get_closing_price(ticker, date)
+        pricelist.append(price)
 
     conn = psycopg2.connect(
         dbname=DB_NAME,
@@ -469,7 +504,7 @@ def add_data_to_calc(statement_dates: list):
         )
     conn.commit()
     print("entered info into calc table")
-    print(type(last_day))
+    print(last_day)
 
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 
@@ -481,5 +516,5 @@ if __name__ == "__main__":
     insert_multiple_statements(all_cash_data, "cashflow")
     all_balance_data = get_comp_fin(ticker, "balance", years=5)
     dates = insert_multiple_statements(all_balance_data, "balance")
-    add_data_to_calc(dates)
+    add_data_to_calc(dates, ticker)
 

@@ -37,6 +37,27 @@ def get_last_trading_day(exchange_name='NYSE'):
     return last_trading_day
 
 
+def get_stock_price_on_date(ticker_symbol: str, target_date: date):
+    """
+    Returns the closing price of a ticker on a specific date.
+    Returns None if the market was closed or data is unavailable.
+    """
+    # yfinance 'end' date is exclusive, so we add one day to the target
+    next_day = target_date + timedelta(days=1)
+    
+    ticker = yf.Ticker(ticker_symbol)
+    
+    # Fetch history for just that one day
+    # We use the start/end format to isolate the specific date
+    hist = ticker.history(start=target_date, end=next_day)
+    
+    if not hist.empty:
+        # Access the 'Close' column for the first (and only) row
+        return hist['Close'].iloc[0]
+    else:
+        print(f"No data for {ticker_symbol} on {target_date}. (Market likely closed)")
+        return None
+
 def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
     Fetch quarterly financial data for a company from SEC EDGAR API.

@@ -7,13 +7,85 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import yfinance as yf
 from datetime import datetime, timedelta
+import pandas_market_calendars as mcal
+import pandas as pd
+
 
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = "517186"
+DB_PASSWORD = ""
 DB_HOST = "localhost"
 DB_PORT = "5432"
+
+
+def get_market_status(target_date_str, exchange_name='NYSE'):
+    # 1. Load the exchange calendar
+    try:
+        exchange = mcal.get_calendar(exchange_name)
+    except Exception:
+        return f"Exchange '{exchange_name}' not found."
+
+    # 2. Convert string to a pandas timestamp
+    target_date = pd.Timestamp(target_date_str).tz_localize(None)
+    
+    # 3. Check if the date is a valid session
+    # We look at a small range around the date to verify
+    schedule = exchange.schedule(start_date=target_date, end_date=target_date)
+    
+    if not schedule.empty:
+        return target_date.date()
+    else:
+        # 4. If closed, find the next open day
+        # We search forward up to 10 days (to account for long holidays/weekends)
+        search_end = target_date + timedelta(days=10)
+        future_schedule = exchange.schedule(start_date=target_date, end_date=search_end)
+        
+        if not future_schedule.empty:
+            next_open = future_schedule.index[0].date()
+            return next_open
+
+def get_last_trading_day(exchange_name='NYSE'):
+    exchange = mcal.get_calendar(exchange_name)
+    
+    # 1. Define a date range to check (today and the last few days)
+    now = pd.Timestamp.now(tz='UTC')
+    # We look back 7 days to ensure we catch a trading day even over long holidays
+    schedule = exchange.schedule(start_date=now - pd.Timedelta(days=7), end_date=now)
+    
+    # 2. Check if the market is open RIGHT NOW
+    # Pass the 'schedule' we just created into the function
+    if exchange.is_open_now(schedule):
+        return now.date()
+    
+    # 3. If closed, return the most recent trading day from the schedule
+    # schedule.index contains the list of valid trading dates
+    last_trading_day = schedule.index[-2].date()
+    return last_trading_day
+
+
+def get_closing_price(ticker_symbol, target_date):
+    """
+    Retrieves the closing price for a specific ticker on a specific date.
+    
+    :param ticker_symbol: Stock ticker (e.g., 'AAPL')
+    :param target_date: A datetime.date object
+    :return: Closing price as a float or None
+    """
+    # yfinance expects strings, so we format the date object
+    start_str = target_date.strftime('%Y-%m-%d')
+    
+    # Define end date as the day after (exclusive)
+    end_date = target_date + timedelta(days=1)
+    end_str = end_date.strftime('%Y-%m-%d')
+
+    ticker = yf.Ticker(ticker_symbol)
+    df = ticker.history(start=start_str, end=end_str)
+
+    if not df.empty:
+        return round(float(df['Close'].iloc[0]), 3) 
+    return None
+
 
 def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
@@ -400,8 +472,26 @@ def cleardatabase():
     conn.close()
 
 
-def add_data_to_calc(statement_dates: list):
-    
+
+
+import psycopg2
+from psycopg2 import extras, sql
+
+def add_data_to_calc(statement_dates: list, ticker: str):
+    last_day = get_last_trading_day()
+    statement_dates.insert(0, last_day)
+
+    data_to_insert = []
+    for original_date in statement_dates:
+        # Use a temporary variable for the lookup logic
+        lookup_date = get_market_status(original_date)
+        
+        # Get price using the adjusted date
+        price = get_closing_price(ticker, lookup_date)
+        
+        # Pair the price with the ORIGINAL date for the database
+        data_to_insert.append((original_date, price))
+
     conn = psycopg2.connect(
         dbname=DB_NAME,
         user=DB_USER,
@@ -410,19 +500,26 @@ def add_data_to_calc(statement_dates: list):
         port=DB_PORT
     )
     cur = conn.cursor()
-    
+
+    insert_query = """
+        INSERT INTO calc (statement_date, share_price) 
+        VALUES %s 
+        ON CONFLICT (statement_date) 
+        DO UPDATE SET share_price = EXCLUDED.share_price
+    """
+
     extras.execute_values(
         cur,
-        sql.SQL("""
-            INSERT INTO calc (statement_date) 
-            VALUES %s 
-            ON CONFLICT (statement_date) DO NOTHING
-        """),
-        [(date,) for date in statement_dates],
+        sql.SQL(insert_query),
+        data_to_insert,
         page_size=1000
-        )
+    )
+
     conn.commit()
-    print("entered info into calc table")
+    cur.close()
+    conn.close()
+    print(f"Data mapping complete. Original dates preserved in database.")
+
 
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 
@@ -434,5 +531,5 @@ if __name__ == "__main__":
     insert_multiple_statements(all_cash_data, "cashflow")
     all_balance_data = get_comp_fin(ticker, "balance", years=5)
     dates = insert_multiple_statements(all_balance_data, "balance")
-    add_data_to_calc(dates)
+    add_data_to_calc(dates, ticker)
 

@@ -14,7 +14,7 @@ import pandas as pd
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = "517186"
+DB_PASSWORD = ""
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -472,16 +472,25 @@ def cleardatabase():
     conn.close()
 
 
+
+
+import psycopg2
+from psycopg2 import extras, sql
+
 def add_data_to_calc(statement_dates: list, ticker: str):
-    
     last_day = get_last_trading_day()
     statement_dates.insert(0, last_day)
 
-    pricelist = []
-    for date in statement_dates:
-        date = get_market_status(date)
-        price = get_closing_price(ticker, date)
-        pricelist.append(price)
+    data_to_insert = []
+    for original_date in statement_dates:
+        # Use a temporary variable for the lookup logic
+        lookup_date = get_market_status(original_date)
+        
+        # Get price using the adjusted date
+        price = get_closing_price(ticker, lookup_date)
+        
+        # Pair the price with the ORIGINAL date for the database
+        data_to_insert.append((original_date, price))
 
     conn = psycopg2.connect(
         dbname=DB_NAME,
@@ -492,19 +501,25 @@ def add_data_to_calc(statement_dates: list, ticker: str):
     )
     cur = conn.cursor()
 
+    insert_query = """
+        INSERT INTO calc (statement_date, share_price) 
+        VALUES %s 
+        ON CONFLICT (statement_date) 
+        DO UPDATE SET share_price = EXCLUDED.share_price
+    """
+
     extras.execute_values(
         cur,
-        sql.SQL("""
-            INSERT INTO calc (statement_date) 
-            VALUES %s 
-            ON CONFLICT (statement_date) DO NOTHING
-        """),
-        [(date,) for date in statement_dates],
+        sql.SQL(insert_query),
+        data_to_insert,
         page_size=1000
-        )
+    )
+
     conn.commit()
-    print("entered info into calc table")
-    print(last_day)
+    cur.close()
+    conn.close()
+    print(f"Data mapping complete. Original dates preserved in database.")
+
 
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 

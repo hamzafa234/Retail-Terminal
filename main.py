@@ -7,6 +7,9 @@ from datetime import datetime
 from typing import List, Dict, Optional
 import yfinance as yf
 from datetime import datetime, timedelta
+import pandas_market_calendars as mcal
+import pandas as pd
+
 
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
@@ -14,6 +17,25 @@ DB_USER = "hamzafahad"
 DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
+
+def get_last_trading_day(exchange_name='NYSE'):
+    exchange = mcal.get_calendar(exchange_name)
+    
+    # 1. Define a date range to check (today and the last few days)
+    now = pd.Timestamp.now(tz='UTC')
+    # We look back 7 days to ensure we catch a trading day even over long holidays
+    schedule = exchange.schedule(start_date=now - pd.Timedelta(days=7), end_date=now)
+    
+    # 2. Check if the market is open RIGHT NOW
+    # Pass the 'schedule' we just created into the function
+    if exchange.is_open_now(schedule):
+        return now.date()
+    
+    # 3. If closed, return the most recent trading day from the schedule
+    # schedule.index contains the list of valid trading dates
+    last_trading_day = schedule.index[-1].date()
+    return last_trading_day
+
 
 def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
@@ -402,6 +424,9 @@ def cleardatabase():
 
 def add_data_to_calc(statement_dates: list):
     
+    last_day = get_last_trading_day()
+    statement_dates.insert(0, last_day)
+
     conn = psycopg2.connect(
         dbname=DB_NAME,
         user=DB_USER,
@@ -410,7 +435,7 @@ def add_data_to_calc(statement_dates: list):
         port=DB_PORT
     )
     cur = conn.cursor()
-    
+
     extras.execute_values(
         cur,
         sql.SQL("""

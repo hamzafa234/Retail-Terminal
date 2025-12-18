@@ -527,47 +527,53 @@ def calc_marketcap(pricelis: lis):
 
     
 
+
 def add_data_to_calc(statement_dates: list, ticker: str):
     last_day = get_last_trading_day()
     statement_dates.insert(0, last_day)
 
-    market_cap_lis = [] 
-    data_to_insert = []
+    # 1. Collect price data
+    price_data = [] 
     for original_date in statement_dates:
         lookup_date = get_market_status(original_date)
         price = get_closing_price(ticker, lookup_date)
-        data_to_insert.append((original_date, price))
+        price_data.append((original_date, price))
 
-    market_cap_lis = calc_marketcap(data_to_insert)
+    # 2. Calculate market caps
+    # Assuming calc_marketcap returns a list of values like [100.0, 105.2, ...]
+    market_cap_lis = calc_marketcap(price_data)
 
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT
-    )
+    # 3. COMBINE THEM: Create the final list of tuples (date, price, market_cap)
+    final_data_to_insert = []
+    for i in range(len(price_data)):
+        date = price_data[i][0]
+        price = price_data[i][1]
+        m_cap = market_cap_lis[i]
+        final_data_to_insert.append((date, price, m_cap))
+
+    conn = psycopg2.connect(...)
     cur = conn.cursor()
 
+    # 4. UPDATE QUERY: Include market_cap in VALUES and DO UPDATE
     insert_query = """
-        INSERT INTO calc (statement_date, share_price) 
+        INSERT INTO calc (statement_date, share_price, market_cap) 
         VALUES %s 
         ON CONFLICT (statement_date) 
-        DO UPDATE SET share_price = EXCLUDED.share_price
+        DO UPDATE SET 
+            share_price = EXCLUDED.share_price,
+            market_cap = EXCLUDED.market_cap
     """
 
     extras.execute_values(
         cur,
-        sql.SQL(insert_query),
-        data_to_insert,
+        insert_query,
+        final_data_to_insert, # Use the combined list
         page_size=1000
     )
 
     conn.commit()
-    cur.close()
-    conn.close()
-    print(f"Data mapping complete. Original dates preserved in database.")
-
+    # ... close connections
+    
 
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 

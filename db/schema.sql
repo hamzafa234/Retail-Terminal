@@ -15,7 +15,8 @@ create table calc (
     wacc decimal(10, 4),
     insider_activity bigint,
     unique(statement_date),
-    riskfreerate decimal(10, 4)
+    riskfreerate decimal(10, 4),
+    share_price decimal(10, 4)
 );
 
 -- income statement table

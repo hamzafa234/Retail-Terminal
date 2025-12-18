@@ -448,6 +448,7 @@ def add_data_to_calc(statement_dates: list):
         )
     conn.commit()
     print("entered info into calc table")
+    print(type(last_day))
 
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 

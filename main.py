@@ -63,6 +63,47 @@ def get_last_trading_day(exchange_name='NYSE'):
     last_trading_day = schedule.index[-2].date()
     return last_trading_day
 
+def get_shares_outstanding():
+    connection = None
+    try:
+        # 1. Connect to the database
+        connection = psycopg2.connect(
+            user="hamzafahad",
+            password="517186",
+            host="localhost",
+            port="5432",
+            database="fin_data"
+        )
+
+        # 2. Create a cursor to perform database operations
+        cursor = connection.cursor()
+
+        # 3. Execute a query
+        query = "SELECT * FROM income_statement;"
+        cursor.execute(query)
+
+        # 4. Fetch all rows and store them in a list
+        # fetchall() returns a list of tuples: [('data1',), ('data2',)]
+        rows = cursor.fetchall()
+
+        # 5. Flatten the list (optional)
+        # If you only selected one column, you might want a simple list
+        data_list = [row[18] for row in rows]
+
+        return data_list
+
+    except (Exception, psycopg2.Error) as error:
+        print("Error while fetching data:", error)
+
+    finally:
+        # 6. Close the connection
+        if connection:
+            cursor.close()
+            connection.close()
+
+# Usage
+my_data = get_data_as_list()
+print(my_data)
 
 def get_closing_price(ticker_symbol, target_date):
     """
@@ -471,26 +512,33 @@ def cleardatabase():
     cursor.close()
     conn.close()
 
+def calc_marketcap(pricelis: lis): 
+    caplis = []
+    outstanding = [] 
+    outstanding = get_shares_outstanding()
+    x = 0 
 
+    for price in pricelis:
+        cap = price * outstanding[x]
+        x = x + 1
+        caplis.insert(cap, x)
 
+    return caplis
 
-import psycopg2
-from psycopg2 import extras, sql
+    
 
 def add_data_to_calc(statement_dates: list, ticker: str):
     last_day = get_last_trading_day()
     statement_dates.insert(0, last_day)
 
+    market_cap_lis = [] 
     data_to_insert = []
     for original_date in statement_dates:
-        # Use a temporary variable for the lookup logic
         lookup_date = get_market_status(original_date)
-        
-        # Get price using the adjusted date
         price = get_closing_price(ticker, lookup_date)
-        
-        # Pair the price with the ORIGINAL date for the database
         data_to_insert.append((original_date, price))
+
+    market_cap_lis = calc_marketcap(data_to_insert)
 
     conn = psycopg2.connect(
         dbname=DB_NAME,

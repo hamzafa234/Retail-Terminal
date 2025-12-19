@@ -14,7 +14,7 @@ import numpy as np
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = ""
+DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -45,10 +45,12 @@ def get_market_status(target_date_str, exchange_name='NYSE'):
             next_open = future_schedule.index[0].date()
             return next_open
 
-def get_shares_outstanding():
+
+def get_info_from_db(line_item: str):
     connection = None
+    data_list = []
+    
     try:
-        # 1. Connect to the database
         connection = psycopg2.connect(
             user=DB_USER,
             password=DB_PASSWORD,
@@ -56,32 +58,57 @@ def get_shares_outstanding():
             port=DB_PORT,
             database=DB_NAME
         )
-
-        # 2. Create a cursor to perform database operations
         cursor = connection.cursor()
 
-        # 3. Execute a query
-        query = "SELECT * FROM income_statement;"
-        cursor.execute(query)
+        # 1. Define and Execute specific queries based on the item
+        if line_item == "shares outstanding":
+            # COALESCE ensures we get 0 instead of None if data is missing
+            cursor.execute("SELECT COALESCE(shares_outstanding, 0) FROM income_statement;")
+            rows = cursor.fetchall()
+            data_list = [row[0] for row in rows]
 
-        # 4. Fetch all rows and store them in a list
-        # fetchall() returns a list of tuples: [('data1',), ('data2',)]
-        rows = cursor.fetchall()
+        elif line_item == "cash":
+            # Summing components: if either is NULL, it's treated as 0
+            cursor.execute("""
+                SELECT 
+                    COALESCE(cash_and_equivalents, 0), 
+                    COALESCE(short_term_investments, 0) 
+                FROM balance_sheet;
+            """)
+            rows = cursor.fetchall()
+            data_list = [row[0] + row[1] for row in rows]
 
-        # 5. Flatten the list (optional)
-        # If you only selected one column, you might want a simple list
-        data_list = [row[18] for row in rows]
+        elif line_item == "debt":
+            # This handles companies with no debt records
+            cursor.execute("""
+                SELECT 
+                    COALESCE(short_term_debt, 0), 
+                    COALESCE(long_term_debt, 0) 
+                FROM balance_sheet;
+            """)
+            rows = cursor.fetchall()
+            data_list = [row[0] + row[1] for row in rows]
 
         return data_list
 
     except (Exception, psycopg2.Error) as error:
         print("Error while fetching data:", error)
+        return None
 
     finally:
-        # 6. Close the connection
         if connection:
             cursor.close()
             connection.close()
+def combine(lis: list):
+    combinedlis = []
+    
+    # Iterate through each index position
+    for i in range(len(lis[0])):
+        # Collect elements at index i from all lists
+        combined_element = [sublist[i] for sublist in lis]
+        combinedlis.append(combined_element)
+    
+    return combinedlis
 
 
 def get_closing_price(ticker_symbol, target_date):
@@ -491,39 +518,46 @@ def cleardatabase():
     cursor.close()
     conn.close()
 
+    
 def add_data_to_calc(statement_dates: list, ticker: str):
     #last_day = get_last_trading_day()
     #statement_dates.insert(0, last_day)
-
     # 1. Collect price data
-    outstanding = get_shares_outstanding()
-
+    outstanding = get_info_from_db("shares outstanding")
+    debt = get_info_from_db("debt")
+    cash = get_info_from_db("cash")
     price_data = []
     date_data = []
-
+    
     for original_date in statement_dates:
         lookup_date = get_market_status(original_date)
         price = get_closing_price(ticker, lookup_date)
         price_data.append(price)
         date_data.append(original_date)
-
+    
     # 2. Calculate market caps
-    # Assuming calc_marketcap returns a list of values like [100.0, 105.2, ...]
     x = 0
     market_cap_lis = []
     for shares in outstanding:
         cap = shares * price_data[x]
         x = x + 1
         market_cap_lis.append(cap)
-
-    # 3. COMBINE THEM: Create the final list of tuples (date, price, market_cap)
+    
+    # 3. Calculate enterprise values
+    ev_data = []
+    for i in range(len(market_cap_lis)):
+        enterprise_value = market_cap_lis[i] + debt[i] - cash[i]
+        ev_data.append(enterprise_value)
+    
+    # 4. COMBINE THEM: Create the final list of tuples (date, price, market_cap, enterprise_value)
     final_data_to_insert = []
     for i in range(len(price_data)):
         date = date_data[i]
         price = price_data[i]
         m_cap = market_cap_lis[i]
-        final_data_to_insert.append((date, price, m_cap))
-
+        ev = ev_data[i]
+        final_data_to_insert.append((date, price, m_cap, ev))
+    
     conn = psycopg2.connect( 
         user=DB_USER,
         password=DB_PASSWORD,
@@ -532,27 +566,27 @@ def add_data_to_calc(statement_dates: list, ticker: str):
         database=DB_NAME
     )
     cur = conn.cursor()
-
-    # 4. UPDATE QUERY: Include market_cap in VALUES and DO UPDATE
+    
+    # 5. UPDATE QUERY: Include enterprise_value in VALUES and DO UPDATE
     insert_query = """
-        INSERT INTO calc (statement_date, share_price, market_cap) 
+        INSERT INTO calc (statement_date, share_price, market_cap, enterprise_value) 
         VALUES %s 
         ON CONFLICT (statement_date) 
         DO UPDATE SET 
             share_price = EXCLUDED.share_price,
-            market_cap = EXCLUDED.market_cap
+            market_cap = EXCLUDED.market_cap,
+            enterprise_value = EXCLUDED.enterprise_value
     """
-
     extras.execute_values(
         cur,
         insert_query,
-        final_data_to_insert, # Use the combined list
+        final_data_to_insert,
         page_size=1000
     )
-
     conn.commit()
     print("added data to calc table")
     # ... close connections
+    
     
 
 if __name__ == "__main__":

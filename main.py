@@ -9,12 +9,12 @@ import yfinance as yf
 from datetime import datetime, timedelta
 import pandas_market_calendars as mcal
 import pandas as pd
-
+import numpy as np
 
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = ""
+DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -68,11 +68,11 @@ def get_shares_outstanding():
     try:
         # 1. Connect to the database
         connection = psycopg2.connect(
-            user="hamzafahad",
-            password="517186",
-            host="localhost",
-            port="5432",
-            database="fin_data"
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME
         )
 
         # 2. Create a cursor to perform database operations
@@ -101,9 +101,6 @@ def get_shares_outstanding():
             cursor.close()
             connection.close()
 
-# Usage
-my_data = get_data_as_list()
-print(my_data)
 
 def get_closing_price(ticker_symbol, target_date):
     """
@@ -512,46 +509,49 @@ def cleardatabase():
     cursor.close()
     conn.close()
 
-def calc_marketcap(pricelis: lis): 
-    caplis = []
-    outstanding = [] 
-    outstanding = get_shares_outstanding()
-    x = 0 
-
-    for price in pricelis:
-        cap = price * outstanding[x]
-        x = x + 1
-        caplis.insert(cap, x)
-
-    return caplis
-
-    
-
-
 def add_data_to_calc(statement_dates: list, ticker: str):
-    last_day = get_last_trading_day()
-    statement_dates.insert(0, last_day)
+    #last_day = get_last_trading_day()
+    #statement_dates.insert(0, last_day)
 
     # 1. Collect price data
-    price_data = [] 
+    outstanding = get_shares_outstanding()
+
+    price_data = []
+    date_data = []
+
     for original_date in statement_dates:
         lookup_date = get_market_status(original_date)
         price = get_closing_price(ticker, lookup_date)
-        price_data.append((original_date, price))
+        price_data.append(price)
+        date_data.append(original_date)
 
     # 2. Calculate market caps
     # Assuming calc_marketcap returns a list of values like [100.0, 105.2, ...]
-    market_cap_lis = calc_marketcap(price_data)
+    x = 0
+    market_cap_lis = []
+    for shares in outstanding:
+        cap = shares * price_data[x]
+        x = x + 1
+        market_cap_lis.append(cap)
+
+
+
 
     # 3. COMBINE THEM: Create the final list of tuples (date, price, market_cap)
     final_data_to_insert = []
     for i in range(len(price_data)):
-        date = price_data[i][0]
-        price = price_data[i][1]
+        date = date_data[i]
+        price = price_data[i]
         m_cap = market_cap_lis[i]
         final_data_to_insert.append((date, price, m_cap))
 
-    conn = psycopg2.connect(...)
+    conn = psycopg2.connect( 
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME
+    )
     cur = conn.cursor()
 
     # 4. UPDATE QUERY: Include market_cap in VALUES and DO UPDATE
@@ -572,6 +572,7 @@ def add_data_to_calc(statement_dates: list, ticker: str):
     )
 
     conn.commit()
+    print("added data to calc table")
     # ... close connections
     
 

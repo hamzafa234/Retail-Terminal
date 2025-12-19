@@ -587,7 +587,10 @@ def add_data_to_calc(statement_dates: list, ticker: str):
     print("added data to calc table")
     # ... close connections
     
-    
+def get_debt_info(ticker: str):
+    dl = Downloader("Your Name", "your.email@example.com")
+    dl.get("10-K", ticker, limit=1, download_details=True)
+    print(f"Successfully downloaded the latest 10-K for {ticker}.")
 
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 
@@ -600,4 +603,4 @@ if __name__ == "__main__":
     all_balance_data = get_comp_fin(ticker, "balance", years=5)
     dates = insert_multiple_statements(all_balance_data, "balance")
     add_data_to_calc(dates, ticker)
-
+    get_debt_info(ticker)

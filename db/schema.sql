@@ -19,6 +19,14 @@ create table calc (
     share_price decimal(10, 4)
 );
 
+
+CREATE TABLE debt_info (
+    id SERIAL PRIMARY KEY,
+    due_date DATE NOT NULL,
+    amount BIGINT,
+    rate DECIMAL(10, 4),
+    debt_security_type VARCHAR(255) 
+);
 -- income statement table
 create table income_statement (
     id serial primary key,

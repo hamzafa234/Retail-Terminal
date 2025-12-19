@@ -14,7 +14,7 @@ import numpy as np
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = "517186"
+DB_PASSWORD = ""
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -44,24 +44,6 @@ def get_market_status(target_date_str, exchange_name='NYSE'):
         if not future_schedule.empty:
             next_open = future_schedule.index[0].date()
             return next_open
-
-def get_last_trading_day(exchange_name='NYSE'):
-    exchange = mcal.get_calendar(exchange_name)
-    
-    # 1. Define a date range to check (today and the last few days)
-    now = pd.Timestamp.now(tz='UTC')
-    # We look back 7 days to ensure we catch a trading day even over long holidays
-    schedule = exchange.schedule(start_date=now - pd.Timedelta(days=7), end_date=now)
-    
-    # 2. Check if the market is open RIGHT NOW
-    # Pass the 'schedule' we just created into the function
-    if exchange.is_open_now(schedule):
-        return now.date()
-    
-    # 3. If closed, return the most recent trading day from the schedule
-    # schedule.index contains the list of valid trading dates
-    last_trading_day = schedule.index[-2].date()
-    return last_trading_day
 
 def get_shares_outstanding():
     connection = None
@@ -533,9 +515,6 @@ def add_data_to_calc(statement_dates: list, ticker: str):
         cap = shares * price_data[x]
         x = x + 1
         market_cap_lis.append(cap)
-
-
-
 
     # 3. COMBINE THEM: Create the final list of tuples (date, price, market_cap)
     final_data_to_insert = []

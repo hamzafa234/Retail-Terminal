@@ -48,6 +48,52 @@ def get_closing_prices_list(ticker_symbol: str, target_dates: list):
     
     return prices
 
+
+def get_nyse_trading_dates(start_date, end_date):
+    """
+    Generates a list of dates when the NYSE was open between start_date and end_date.
+    """
+    nyse = mcal.get_calendar('NYSE')
+    schedule = nyse.schedule(start_date=start_date, end_date=end_date)
+    trading_days = schedule.index.tolist()
+    
+    return trading_days
+
+def get_last_n_trading_days(n=252, end_date=None):
+    """
+    Helper function to get exactly the last n trading days ending on a specified date.
+    
+    Parameters:
+    n (int): Number of trading days to retrieve (default: 252)
+    end_date (datetime.date or datetime.datetime or None): The end date for the window.
+                                                             If None, uses today.
+    
+    Returns:
+    list: A list of the last n trading days ending on or before end_date.
+    """
+    if end_date is None:
+        end_date = datetime.now()
+    elif isinstance(end_date, datetime.date) and not isinstance(end_date, datetime):
+        # Convert date to datetime
+        end_date = datetime.combine(end_date, datetime.min.time())
+    
+    start_date = end_date - timedelta(days=int(n * 1.5))
+    all_dates = get_nyse_trading_dates(start_date, end_date)
+    
+    return all_dates[-n:]
+
+def calculate_equity_volatility(price_history):
+    """
+    Expects a list or array of daily closing prices (newest to oldest or vice versa).
+    Returns the annualized volatility (sigma_E).
+    """
+    prices = np.array(price_history)
+    daily_returns = np.log(prices[1:] / prices[:-1])
+    daily_std = np.std(daily_returns)
+    annualized_vol = daily_std * np.sqrt(252)
+    
+    return annualized_vol
+
 def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
     Fetch quarterly financial data for a company from SEC EDGAR API.
@@ -460,29 +506,34 @@ def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list
     # with the existing financial statement tables.
 # Fixed SQL query snippet
     query = """
-    WITH external_data (s_date, s_price, s_beta, s_yields) AS (
-        VALUES %s
-    )
-    INSERT INTO calc (statement_date, share_price, beta, riskfreerate, market_cap, enterprise_value)
-    SELECT 
-        ed.s_date,
-        ed.s_price,
-        ed.s_beta,
-        ed.s_yields,
-        (inc.shares_outstanding * ed.s_price),
-        ((inc.shares_outstanding * ed.s_price) + 
-        (bal.short_term_debt + bal.long_term_debt) - 
-        bal.cash_and_equivalents)
-    FROM external_data ed
-    JOIN income_statement inc ON ed.s_date = inc.statement_date
-    JOIN balance_sheet bal ON ed.s_date = bal.statement_date
-    ON CONFLICT (statement_date) 
-    DO UPDATE SET 
-        share_price = EXCLUDED.share_price,
-        beta = EXCLUDED.beta,
-        riskfreerate = EXCLUDED.riskfreerate,
-        market_cap = EXCLUDED.market_cap,
-        enterprise_value = EXCLUDED.enterprise_value;
+WITH date_universe AS (
+    -- This ensures we only process dates that exist in both financial tables
+    SELECT inc.statement_date, inc.shares_outstanding, bal.short_term_debt, bal.long_term_debt, bal.cash_and_equivalents
+    FROM income_statement inc
+    JOIN balance_sheet bal ON inc.statement_date = bal.statement_date
+),
+external_data (s_date, s_price, s_beta, s_yields) AS (
+    VALUES %s
+)
+INSERT INTO calc (statement_date, share_price, beta, riskfreerate, market_cap, enterprise_value)
+SELECT 
+    du.statement_date,
+    ed.s_price,
+    ed.s_beta,
+    ed.s_yields,
+    (du.shares_outstanding * ed.s_price),
+    ((du.shares_outstanding * ed.s_price) + 
+     (du.short_term_debt + du.long_term_debt) - 
+     du.cash_and_equivalents)
+FROM date_universe du
+LEFT JOIN external_data ed ON du.statement_date = ed.s_date
+ON CONFLICT (statement_date) 
+DO UPDATE SET 
+    share_price = EXCLUDED.share_price,
+    beta = EXCLUDED.beta,
+    riskfreerate = EXCLUDED.riskfreerate,
+    market_cap = EXCLUDED.market_cap,
+    enterprise_value = EXCLUDED.enterprise_value;
 """
 
     try:
@@ -495,6 +546,64 @@ def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list
     finally:
         cur.close()
         conn.close()
+
+def copy_dates():
+    '''
+    This function creates the SQL functions, executes the sync, 
+    and returns the list of newly inserted dates.
+    '''
+    # 1. Setup connection (ensure these variables are defined in your scope)
+    conn = psycopg2.connect(
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME
+    )
+    cur = conn.cursor()
+
+    # 2. SQL to define the functions (Your existing logic)
+    create_functions_query = """
+CREATE OR REPLACE FUNCTION get_calc_statement_dates()
+RETURNS TABLE(out_date DATE) AS $$ 
+BEGIN
+    RETURN QUERY
+    SELECT statement_date
+    FROM calc
+    ORDER BY statement_date DESC; -- Optional: keeps dates chronological for your script
+END;
+$$ LANGUAGE plpgsql;
+    """
+
+    inserted_dates = []
+
+    try:
+        # Step A: Create/Update the function in the DB
+        cur.execute(create_functions_query)
+        
+        # Step B: Execute the function and capture the RETURN QUERY results
+        cur.execute("SELECT * FROM sync_balance_sheet_dates_to_calc();")
+        
+        # Step C: Store the returned dates into a list
+        # .fetchall() returns a list of tuples: [(date1,), (date2,)]
+        results = cur.fetchall()
+        inserted_dates = [row[0] for row in results]
+
+        conn.commit()
+        print(f"Successfully synced {len(inserted_dates)} new dates.")
+        
+    except Exception as e:
+        print(f"Error during DB calculation: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
+
+    return inserted_dates
+
+# Usage
+# new_dates = copy_dates()
+# print(new_dates)
 
 def get_betas_for_dates(ticker, dates_list, benchmark='^GSPC', years=3):
     if not dates_list:
@@ -589,16 +698,68 @@ def get_treasury_yield_list_fast(target_dates: list):
 
 
 if __name__ == "__main__":
-    ticker = input("Enter a Company Ticker: ").strip().upper() 
-    cleardatabase()
+    print("Financial Data Manager")
+    print("Commands:")
+    print("  1. statements <TICKER> - Populate income, cash flow, and balance sheet tables")
+    print("  2. calc <TICKER> - Populate calculation table with beta, prices, and yields")
+    print("  3. exit - Exit the program")
+    print()
+    
+    while True:
+        command = input("Enter command: ").strip().lower()
+        
+        if command == "exit":
+            print("Exiting...")
+            break
+        
+        parts = command.split()
+        
+        if len(parts) < 2:
+            print("Error: Invalid command format")
+            print("Usage: statements <TICKER> or calc <TICKER>")
+            continue
+        
+        cmd = parts[0]
+        ticker = parts[1].upper()
+        
+        if cmd == "statements":
+            print(f"\nPopulating financial statements for {ticker}...")
+            cleardatabase()
+            
+            print("Fetching income statement data...")
+            all_income_data = get_comp_fin(ticker, "income", years=5)
+            insert_multiple_statements(all_income_data, "income")
+            
+            print("Fetching cash flow statement data...")
+            all_cash_data = get_comp_fin(ticker, "cashflow", years=5)
+            insert_multiple_statements(all_cash_data, "cashflow")
+            
+            print("Fetching balance sheet data...")
+            all_balance_data = get_comp_fin(ticker, "balance", years=5)
+            insert_multiple_statements(all_balance_data, "balance")
+            
+            print(f"✓ Financial statements for {ticker} populated successfully!\n")
+        
+        elif cmd == "calc":
+            print(f"\nPopulating calculation table for {ticker}...")
+            
+            # Get dates from balance sheet table
+            dates = copy_dates()
 
-    all_income_data = get_comp_fin(ticker, "income", years=5)
-    insert_multiple_statements(all_income_data, "income")
-    all_cash_data = get_comp_fin(ticker, "cashflow", years=5)
-    insert_multiple_statements(all_cash_data, "cashflow")
-    all_balance_data = get_comp_fin(ticker, "balance", years=5)
-    dates = insert_multiple_statements(all_balance_data, "balance")
-    beta = get_betas_for_dates(ticker, dates)
-    prices = get_closing_prices_list(ticker, dates)
-    yields = get_treasury_yield_list_fast(dates)
-    add_data_to_calc_in_db(ticker, dates, beta, prices, yields)
+            print("Fetching beta values...")
+            beta = get_betas_for_dates(ticker, dates)
+            
+            print("Fetching closing prices...")
+            prices = get_closing_prices_list(ticker, dates)
+            
+            print("Fetching treasury yields...")
+            yields = get_treasury_yield_list_fast(dates)
+            
+            print("Inserting data into calc table...")
+            add_data_to_calc_in_db(ticker, dates, beta, prices, yields)
+            
+            print(f"✓ Calculation table for {ticker} populated successfully!\n")
+        
+        else:
+            print(f"Error: Unknown command '{cmd}'")
+            print("Valid commands: statements, calc, exit\n")

@@ -518,16 +518,16 @@ def cleardatabase():
     cursor.close()
     conn.close()
 
-    
 def add_data_to_calc(statement_dates: list, ticker: str):
-    #last_day = get_last_trading_day()
-    #statement_dates.insert(0, last_day)
-    # 1. Collect price data
+    # 1. Collect price and beta data
     outstanding = get_info_from_db("shares outstanding")
     debt = get_info_from_db("debt")
     cash = get_info_from_db("cash")
+    
     price_data = []
     date_data = []
+    # Get the beta values for the provided dates
+    beta_values = get_betas_for_dates(ticker, statement_dates)
     
     for original_date in statement_dates:
         lookup_date = get_market_status(original_date)
@@ -536,11 +536,9 @@ def add_data_to_calc(statement_dates: list, ticker: str):
         date_data.append(original_date)
     
     # 2. Calculate market caps
-    x = 0
     market_cap_lis = []
-    for shares in outstanding:
-        cap = shares * price_data[x]
-        x = x + 1
+    for x in range(len(outstanding)):
+        cap = outstanding[x] * price_data[x]
         market_cap_lis.append(cap)
     
     # 3. Calculate enterprise values
@@ -549,15 +547,19 @@ def add_data_to_calc(statement_dates: list, ticker: str):
         enterprise_value = market_cap_lis[i] + debt[i] - cash[i]
         ev_data.append(enterprise_value)
     
-    # 4. COMBINE THEM: Create the final list of tuples (date, price, market_cap, enterprise_value)
+    # 4. COMBINE THEM: Include beta in the final tuple
     final_data_to_insert = []
     for i in range(len(price_data)):
-        date = date_data[i]
-        price = price_data[i]
-        m_cap = market_cap_lis[i]
-        ev = ev_data[i]
-        final_data_to_insert.append((date, price, m_cap, ev))
+        data_tuple = (
+            date_data[i], 
+            price_data[i], 
+            market_cap_lis[i], 
+            ev_data[i], 
+            beta_values[i] # Added Beta here
+        )
+        final_data_to_insert.append(data_tuple)
     
+    # 5. DATABASE OPERATIONS
     conn = psycopg2.connect( 
         user=DB_USER,
         password=DB_PASSWORD,
@@ -567,30 +569,87 @@ def add_data_to_calc(statement_dates: list, ticker: str):
     )
     cur = conn.cursor()
     
-    # 5. UPDATE QUERY: Include enterprise_value in VALUES and DO UPDATE
+    # Updated query to include beta column
     insert_query = """
-        INSERT INTO calc (statement_date, share_price, market_cap, enterprise_value) 
+        INSERT INTO calc (statement_date, share_price, market_cap, enterprise_value, beta) 
         VALUES %s 
         ON CONFLICT (statement_date) 
         DO UPDATE SET 
             share_price = EXCLUDED.share_price,
             market_cap = EXCLUDED.market_cap,
-            enterprise_value = EXCLUDED.enterprise_value
+            enterprise_value = EXCLUDED.enterprise_value,
+            beta = EXCLUDED.beta
     """
-    extras.execute_values(
-        cur,
-        insert_query,
-        final_data_to_insert,
-        page_size=1000
-    )
-    conn.commit()
-    print("added data to calc table")
-    # ... close connections
     
-def get_debt_info(ticker: str):
-    dl = Downloader("Your Name", "your.email@example.com")
-    dl.get("10-K", ticker, limit=1, download_details=True)
-    print(f"Successfully downloaded the latest 10-K for {ticker}.")
+    try:
+        extras.execute_values(
+            cur,
+            insert_query,
+            final_data_to_insert,
+            page_size=1000
+        )
+        conn.commit()
+        print(f"Added data (including beta) to calc table for {ticker}")
+    except Exception as e:
+        print(f"Error inserting data: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()    
+    
+
+def get_betas_for_dates(ticker, dates_list, benchmark='^GSPC', years=3):
+    if not dates_list:
+        return []
+
+    # 1. Date range setup
+    start_buffer = min(dates_list) - timedelta(days=years*365 + 15)
+    end_buffer = max(dates_list) + timedelta(days=2)
+    
+    # 2. Download with explicit arguments to stop warnings
+    data = yf.download(
+        [ticker, benchmark], 
+        start=start_buffer, 
+        end=end_buffer, 
+        progress=False,
+        auto_adjust=False 
+    )
+    
+    if data.empty:
+        return [None] * len(dates_list)
+    
+    # Handle the data structure (YFinance returns MultiIndex for multiple tickers)
+    try:
+        close_data = data['Adj Close']
+    except KeyError:
+        close_data = data['Close']
+    
+    all_returns = close_data.pct_change().dropna()
+    betas = []
+    
+    for target_date in dates_list:
+        # Convert date to Timestamp for pandas indexing
+        target_dt = pd.Timestamp(target_date)
+        window_start = target_dt - timedelta(days=years*365)
+        
+        window_returns = all_returns.loc[window_start:target_dt]
+        
+        # Ensure we have enough data (approx 252 trading days per year)
+        if len(window_returns) < (years * 150): 
+            betas.append(None)
+            continue
+            
+        try:
+            matrix = np.cov(window_returns[ticker], window_returns[benchmark])
+            beta_val = matrix[0, 1] / matrix[1, 1]
+            
+            # CRITICAL: Convert to standard float to avoid SQL "schema np" error
+            betas.append(float(round(beta_val, 4))) 
+            
+        except (ZeroDivisionError, KeyError, ValueError):
+            betas.append(None)
+            
+    return betas
 
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 
@@ -603,4 +662,3 @@ if __name__ == "__main__":
     all_balance_data = get_comp_fin(ticker, "balance", years=5)
     dates = insert_multiple_statements(all_balance_data, "balance")
     add_data_to_calc(dates, ticker)
-    get_debt_info(ticker)

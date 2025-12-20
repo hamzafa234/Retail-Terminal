@@ -18,121 +18,35 @@ DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
-
-def get_market_status(target_date_str, exchange_name='NYSE'):
-    # 1. Load the exchange calendar
-    try:
-        exchange = mcal.get_calendar(exchange_name)
-    except Exception:
-        return f"Exchange '{exchange_name}' not found."
-
-    # 2. Convert string to a pandas timestamp
-    target_date = pd.Timestamp(target_date_str).tz_localize(None)
-    
-    # 3. Check if the date is a valid session
-    # We look at a small range around the date to verify
-    schedule = exchange.schedule(start_date=target_date, end_date=target_date)
-    
-    if not schedule.empty:
-        return target_date.date()
-    else:
-        # 4. If closed, find the next open day
-        # We search forward up to 10 days (to account for long holidays/weekends)
-        search_end = target_date + timedelta(days=10)
-        future_schedule = exchange.schedule(start_date=target_date, end_date=search_end)
-        
-        if not future_schedule.empty:
-            next_open = future_schedule.index[0].date()
-            return next_open
-
-
-def get_info_from_db(line_item: str):
-    connection = None
-    data_list = []
-    
-    try:
-        connection = psycopg2.connect(
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST,
-            port=DB_PORT,
-            database=DB_NAME
-        )
-        cursor = connection.cursor()
-
-        # 1. Define and Execute specific queries based on the item
-        if line_item == "shares outstanding":
-            # COALESCE ensures we get 0 instead of None if data is missing
-            cursor.execute("SELECT COALESCE(shares_outstanding, 0) FROM income_statement;")
-            rows = cursor.fetchall()
-            data_list = [row[0] for row in rows]
-
-        elif line_item == "cash":
-            # Summing components: if either is NULL, it's treated as 0
-            cursor.execute("""
-                SELECT 
-                    COALESCE(cash_and_equivalents, 0), 
-                    COALESCE(short_term_investments, 0) 
-                FROM balance_sheet;
-            """)
-            rows = cursor.fetchall()
-            data_list = [row[0] + row[1] for row in rows]
-
-        elif line_item == "debt":
-            # This handles companies with no debt records
-            cursor.execute("""
-                SELECT 
-                    COALESCE(short_term_debt, 0), 
-                    COALESCE(long_term_debt, 0) 
-                FROM balance_sheet;
-            """)
-            rows = cursor.fetchall()
-            data_list = [row[0] + row[1] for row in rows]
-
-        return data_list
-
-    except (Exception, psycopg2.Error) as error:
-        print("Error while fetching data:", error)
-        return None
-
-    finally:
-        if connection:
-            cursor.close()
-            connection.close()
-def combine(lis: list):
-    combinedlis = []
-    
-    # Iterate through each index position
-    for i in range(len(lis[0])):
-        # Collect elements at index i from all lists
-        combined_element = [sublist[i] for sublist in lis]
-        combinedlis.append(combined_element)
-    
-    return combinedlis
-
-
-def get_closing_price(ticker_symbol, target_date):
+def get_closing_prices_list(ticker_symbol: str, target_dates: list):
     """
-    Retrieves the closing price for a specific ticker on a specific date.
-    
-    :param ticker_symbol: Stock ticker (e.g., 'AAPL')
-    :param target_date: A datetime.date object
-    :return: Closing price as a float or None
+    Retrieves closing prices for a list of dates.
+    If the exact date isn't available (weekend/holiday), returns the price from the next available trading day.
     """
-    # yfinance expects strings, so we format the date object
-    start_str = target_date.strftime('%Y-%m-%d')
-    
-    # Define end date as the day after (exclusive)
-    end_date = target_date + timedelta(days=1)
-    end_str = end_date.strftime('%Y-%m-%d')
-
     ticker = yf.Ticker(ticker_symbol)
-    df = ticker.history(start=start_str, end=end_str)
-
-    if not df.empty:
-        return round(float(df['Close'].iloc[0]), 3) 
-    return None
-
+    prices = []
+    
+    for day in target_dates:
+        # Look ahead up to 7 days to find the next trading day
+        found = False
+        for offset in range(8):  # Check up to 7 days ahead
+            check_date = day + timedelta(days=offset)
+            start_str = check_date.strftime('%Y-%m-%d')
+            end_date = check_date + timedelta(days=1)
+            end_str = end_date.strftime('%Y-%m-%d')
+            
+            df = ticker.history(start=start_str, end=end_str)
+            
+            if not df.empty:
+                closing_price = round(float(df['Close'].iloc[-1]), 3)
+                prices.append(closing_price)
+                found = True
+                break
+        
+        if not found:
+            prices.append(None)  # Only if no trading day found within 7 days
+    
+    return prices
 
 def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
@@ -518,49 +432,23 @@ def cleardatabase():
     cursor.close()
     conn.close()
 
-def add_data_to_calc(statement_dates: list, ticker: str):
-    # 1. Collect price and beta data
-    outstanding = get_info_from_db("shares outstanding")
-    debt = get_info_from_db("debt")
-    cash = get_info_from_db("cash")
+import psycopg2
+from psycopg2 import extras
+
+def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list, share_prices: list):
+    """
+    Performs financial calculations directly inside PostgreSQL.
+    Expects beta_values and share_prices to align with statement_dates.
+    """
     
-    price_data = []
-    date_data = []
-    # Get the beta values for the provided dates
-    beta_values = get_betas_for_dates(ticker, statement_dates)
-    
-    for original_date in statement_dates:
-        lookup_date = get_market_status(original_date)
-        price = get_closing_price(ticker, lookup_date)
-        price_data.append(price)
-        date_data.append(original_date)
-    
-    # 2. Calculate market caps
-    market_cap_lis = []
-    for x in range(len(outstanding)):
-        cap = outstanding[x] * price_data[x]
-        market_cap_lis.append(cap)
-    
-    # 3. Calculate enterprise values
-    ev_data = []
-    for i in range(len(market_cap_lis)):
-        enterprise_value = market_cap_lis[i] + debt[i] - cash[i]
-        ev_data.append(enterprise_value)
-    
-    # 4. COMBINE THEM: Include beta in the final tuple
-    final_data_to_insert = []
-    for i in range(len(price_data)):
-        data_tuple = (
-            date_data[i], 
-            price_data[i], 
-            market_cap_lis[i], 
-            ev_data[i], 
-            beta_values[i] # Added Beta here
-        )
-        final_data_to_insert.append(data_tuple)
-    
-    # 5. DATABASE OPERATIONS
-    conn = psycopg2.connect( 
+    # 1. Prepare data for the temporary mapping
+    # We need to pass the external data (price/beta) so the DB can join them
+    # with the internal data (shares/debt/cash)
+    input_data = []
+    for i in range(len(statement_dates)):
+        input_data.append((statement_dates[i], float(share_prices[i]), float(beta_values[i])))
+
+    conn = psycopg2.connect(
         user=DB_USER,
         password=DB_PASSWORD,
         host=DB_HOST,
@@ -568,35 +456,46 @@ def add_data_to_calc(statement_dates: list, ticker: str):
         database=DB_NAME
     )
     cur = conn.cursor()
-    
-    # Updated query to include beta column
-    insert_query = """
-        INSERT INTO calc (statement_date, share_price, market_cap, enterprise_value, beta) 
-        VALUES %s 
-        ON CONFLICT (statement_date) 
-        DO UPDATE SET 
-            share_price = EXCLUDED.share_price,
-            market_cap = EXCLUDED.market_cap,
-            enterprise_value = EXCLUDED.enterprise_value,
-            beta = EXCLUDED.beta
+
+    # 2. The SQL Query
+    # We use a Common Table Expression (CTE) to join your external price data
+    # with the existing financial statement tables.
+    query = """
+    WITH external_data (s_date, s_price, s_beta) AS (
+        VALUES %s
+    )
+    INSERT INTO calc (statement_date, share_price, beta, market_cap, enterprise_value)
+    SELECT 
+        ed.s_date,
+        ed.s_price,
+        ed.s_beta,
+        -- Market Cap Calculation
+        (inc.shares_outstanding * ed.s_price),
+        -- Enterprise Value Calculation: (Market Cap + Total Debt - Cash)
+        ((inc.shares_outstanding * ed.s_price) + 
+         (bal.short_term_debt + bal.long_term_debt) - 
+         bal.cash_and_equivalents)
+    FROM external_data ed
+    JOIN income_statement inc ON ed.s_date = inc.statement_date
+    JOIN balance_sheet bal ON ed.s_date = bal.statement_date
+    ON CONFLICT (statement_date) 
+    DO UPDATE SET 
+        share_price = EXCLUDED.share_price,
+        beta = EXCLUDED.beta,
+        market_cap = EXCLUDED.market_cap,
+        enterprise_value = EXCLUDED.enterprise_value;
     """
-    
+
     try:
-        extras.execute_values(
-            cur,
-            insert_query,
-            final_data_to_insert,
-            page_size=1000
-        )
+        extras.execute_values(cur, query, input_data)
         conn.commit()
-        print(f"Added data (including beta) to calc table for {ticker}")
+        print(f"Successfully computed and stored data for {ticker} using SQL logic.")
     except Exception as e:
-        print(f"Error inserting data: {e}")
+        print(f"Error during DB calculation: {e}")
         conn.rollback()
     finally:
         cur.close()
-        conn.close()    
-    
+        conn.close()
 
 def get_betas_for_dates(ticker, dates_list, benchmark='^GSPC', years=3):
     if not dates_list:
@@ -661,4 +560,8 @@ if __name__ == "__main__":
     insert_multiple_statements(all_cash_data, "cashflow")
     all_balance_data = get_comp_fin(ticker, "balance", years=5)
     dates = insert_multiple_statements(all_balance_data, "balance")
-    add_data_to_calc(dates, ticker)
+    beta = get_betas_for_dates(ticker, dates)
+    prices = get_closing_prices_list(ticker, dates)
+    print(dates)
+    print(prices)
+    add_data_to_calc_in_db(ticker, dates, beta, prices)

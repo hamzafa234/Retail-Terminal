@@ -432,10 +432,8 @@ def cleardatabase():
     cursor.close()
     conn.close()
 
-import psycopg2
-from psycopg2 import extras
 
-def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list, share_prices: list):
+def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list, share_prices: list, yields: list):
     """
     Performs financial calculations directly inside PostgreSQL.
     Expects beta_values and share_prices to align with statement_dates.
@@ -446,7 +444,7 @@ def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list
     # with the internal data (shares/debt/cash)
     input_data = []
     for i in range(len(statement_dates)):
-        input_data.append((statement_dates[i], float(share_prices[i]), float(beta_values[i])))
+        input_data.append((statement_dates[i], float(share_prices[i]), float(beta_values[i]), float(yields[i])))
 
     conn = psycopg2.connect(
         user=DB_USER,
@@ -460,21 +458,21 @@ def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list
     # 2. The SQL Query
     # We use a Common Table Expression (CTE) to join your external price data
     # with the existing financial statement tables.
+# Fixed SQL query snippet
     query = """
-    WITH external_data (s_date, s_price, s_beta) AS (
+    WITH external_data (s_date, s_price, s_beta, s_yields) AS (
         VALUES %s
     )
-    INSERT INTO calc (statement_date, share_price, beta, market_cap, enterprise_value)
+    INSERT INTO calc (statement_date, share_price, beta, riskfreerate, market_cap, enterprise_value)
     SELECT 
         ed.s_date,
         ed.s_price,
         ed.s_beta,
-        -- Market Cap Calculation
+        ed.s_yields,
         (inc.shares_outstanding * ed.s_price),
-        -- Enterprise Value Calculation: (Market Cap + Total Debt - Cash)
         ((inc.shares_outstanding * ed.s_price) + 
-         (bal.short_term_debt + bal.long_term_debt) - 
-         bal.cash_and_equivalents)
+        (bal.short_term_debt + bal.long_term_debt) - 
+        bal.cash_and_equivalents)
     FROM external_data ed
     JOIN income_statement inc ON ed.s_date = inc.statement_date
     JOIN balance_sheet bal ON ed.s_date = bal.statement_date
@@ -482,9 +480,10 @@ def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list
     DO UPDATE SET 
         share_price = EXCLUDED.share_price,
         beta = EXCLUDED.beta,
+        riskfreerate = EXCLUDED.riskfreerate,
         market_cap = EXCLUDED.market_cap,
         enterprise_value = EXCLUDED.enterprise_value;
-    """
+"""
 
     try:
         extras.execute_values(cur, query, input_data)
@@ -550,6 +549,45 @@ def get_betas_for_dates(ticker, dates_list, benchmark='^GSPC', years=3):
             
     return betas
 
+def get_treasury_yield_list_fast(target_dates: list):
+    """
+    Retrieves 10-year US Treasury yields (^TNX) efficiently.
+    Uses bulk download and 'backfill' to handle non-trading days.
+    """
+    if not target_dates:
+        return []
+
+    # 1. Sort and find the date range
+    # We add a 7-day buffer to the end to ensure the 'bfill' has data to grab 
+    # if the last target date falls on a weekend.
+    sorted_dates = sorted(target_dates)
+    start_date = sorted_dates[0].strftime('%Y-%m-%d')
+    end_date = (sorted_dates[-1] + pd.Timedelta(days=7)).strftime('%Y-%m-%d')
+
+    # 2. Bulk download 
+    # ^TNX returns the yield as a number (e.g., 4.25 means 4.25%)
+    ticker = yf.Ticker("^TNX")
+    history = ticker.history(start=start_date, end=end_date)
+
+    if history.empty:
+        print("Warning: No data found for the given range.")
+        return [None] * len(target_dates)
+
+    # 3. Align timezones
+    # yfinance returns timezone-aware dateds; we convert to naive to match datetime objects
+    history.index = history.index.tz_localize(None)
+
+    # 4. Reindex and Backfill (The "Magic" Step)
+    # This maps our target_dates to the history index.
+    # method='bfill' ensures Saturday/Sunday dates take the value of the next Monday.
+    optimized_series = history['Close'].reindex(target_dates, method='bfill')
+
+    # 5. Convert to decimal (optional) and return list
+    # e.g., 4.25 -> 0.0425
+    return [round(float(val) / 100, 5) if pd.notnull(val) else None for val in optimized_series]
+
+
+
 if __name__ == "__main__":
     ticker = input("Enter a Company Ticker: ").strip().upper() 
     cleardatabase()
@@ -562,6 +600,5 @@ if __name__ == "__main__":
     dates = insert_multiple_statements(all_balance_data, "balance")
     beta = get_betas_for_dates(ticker, dates)
     prices = get_closing_prices_list(ticker, dates)
-    print(dates)
-    print(prices)
-    add_data_to_calc_in_db(ticker, dates, beta, prices)
+    yields = get_treasury_yield_list_fast(dates)
+    add_data_to_calc_in_db(ticker, dates, beta, prices, yields)

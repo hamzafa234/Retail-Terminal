@@ -15,7 +15,7 @@ create table calc (
     wacc decimal(10, 4),
     insider_activity bigint,
     unique(statement_date),
-    riskfreerate decimal(10, 4),
+    riskfreerate NUMERIC(10, 6),
     share_price decimal(10, 4)
 );
 

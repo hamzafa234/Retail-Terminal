@@ -59,26 +59,24 @@ def get_nyse_trading_dates(start_date, end_date):
     
     return trading_days
 
-def get_last_n_trading_days(n=252, end_date=None):
+def get_last_n_trading_days(end_date=None, n=252):
     """
-    Helper function to get exactly the last n trading days ending on a specified date.
-    
-    Parameters:
-    n (int): Number of trading days to retrieve (default: 252)
-    end_date (datetime.date or datetime.datetime or None): The end date for the window.
-                                                             If None, uses today.
-    
-    Returns:
-    list: A list of the last n trading days ending on or before end_date.
+    Helper function to get exactly the last n trading days.
     """
+    # Ensure n is an integer
+    if not isinstance(n, int):
+        raise TypeError(f"Expected n to be an int, got {type(n).__name__}")
+
     if end_date is None:
-        end_date = datetime.now()
-    elif isinstance(end_date, datetime.date) and not isinstance(end_date, datetime):
-        # Convert date to datetime
-        end_date = datetime.combine(end_date, datetime.min.time())
+        end_date = date.today()
     
-    start_date = end_date - timedelta(days=int(n * 1.5))
+    # Logic works for both datetime.date and datetime.datetime
+    start_date = end_date - timedelta(days=int(n * 1.6))
     all_dates = get_nyse_trading_dates(start_date, end_date)
+    
+    while len(all_dates) < n:
+        start_date -= timedelta(days=20)
+        all_dates = get_nyse_trading_dates(start_date, end_date)
     
     return all_dates[-n:]
 
@@ -438,12 +436,8 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
             page_size=1000  
         )
         
-        # Extract statement_date values and insert into calc table
-        statement_dates = [data['statement_date'] for data in data_list if 'statement_date' in data]
-        
         conn.commit()
         print(f"Successfully inserted {len(list_of_tuples)} sample entries into {type}_statement.")
-        return statement_dates 
         
     except psycopg2.Error as e:
         print(f"Database Error: {e}")
@@ -478,19 +472,21 @@ def cleardatabase():
     cursor.close()
     conn.close()
 
-
-def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list, share_prices: list, yields: list):
+def add_data_to_calc_in_db(ticker: str, record_ids: list, beta_values: list, share_prices: list, yields: list, volatility: list):
     """
-    Performs financial calculations directly inside PostgreSQL.
-    Expects beta_values and share_prices to align with statement_dates.
+    Updates the calc table by mapping external lists to existing rows via Primary Key.
     """
     
-    # 1. Prepare data for the temporary mapping
-    # We need to pass the external data (price/beta) so the DB can join them
-    # with the internal data (shares/debt/cash)
+    # 1. Zip data together using the Primary Key (record_ids) as the anchor
     input_data = []
-    for i in range(len(statement_dates)):
-        input_data.append((statement_dates[i], float(share_prices[i]), float(beta_values[i]), float(yields[i])))
+    for i in range(len(record_ids)):
+        input_data.append((
+            record_ids[i],        # Primary Key for the row
+            float(share_prices[i]), 
+            float(beta_values[i]), 
+            float(yields[i]),
+            float(volatility[i])
+        ))
 
     conn = psycopg2.connect(
         user=DB_USER,
@@ -501,47 +497,46 @@ def add_data_to_calc_in_db(ticker: str, statement_dates: list, beta_values: list
     )
     cur = conn.cursor()
 
-    # 2. The SQL Query
-    # We use a Common Table Expression (CTE) to join your external price data
-    # with the existing financial statement tables.
-# Fixed SQL query snippet
+    # 2. Optimized SQL Query using Primary Key Join
     query = """
-WITH date_universe AS (
-    -- This ensures we only process dates that exist in both financial tables
-    SELECT inc.statement_date, inc.shares_outstanding, bal.short_term_debt, bal.long_term_debt, bal.cash_and_equivalents
-    FROM income_statement inc
-    JOIN balance_sheet bal ON inc.statement_date = bal.statement_date
-),
-external_data (s_date, s_price, s_beta, s_yields) AS (
+WITH external_input (pk_id, s_price, s_beta, s_yields, s_vol) AS (
     VALUES %s
+),
+calculated_metrics AS (
+    SELECT 
+        ei.pk_id,
+        ei.s_price,
+        ei.s_beta,
+        ei.s_yields,
+        ei.s_vol,
+        (inc.shares_outstanding * ei.s_price) AS calc_market_cap,
+        ((inc.shares_outstanding * ei.s_price) + 
+         (bal.short_term_debt + bal.long_term_debt) - 
+         bal.cash_and_equivalents) AS calc_ev
+    FROM external_input ei
+    JOIN income_statement inc ON ei.pk_id = inc.id  -- Using Primary Key
+    JOIN balance_sheet bal ON inc.statement_date = bal.statement_date
+    WHERE inc.ticker = %s
 )
-INSERT INTO calc (statement_date, share_price, beta, riskfreerate, market_cap, enterprise_value)
-SELECT 
-    du.statement_date,
-    ed.s_price,
-    ed.s_beta,
-    ed.s_yields,
-    (du.shares_outstanding * ed.s_price),
-    ((du.shares_outstanding * ed.s_price) + 
-     (du.short_term_debt + du.long_term_debt) - 
-     du.cash_and_equivalents)
-FROM date_universe du
-LEFT JOIN external_data ed ON du.statement_date = ed.s_date
-ON CONFLICT (statement_date) 
-DO UPDATE SET 
-    share_price = EXCLUDED.share_price,
-    beta = EXCLUDED.beta,
-    riskfreerate = EXCLUDED.riskfreerate,
-    market_cap = EXCLUDED.market_cap,
-    enterprise_value = EXCLUDED.enterprise_value;
+UPDATE calc
+SET 
+    share_price = cm.s_price,
+    beta = cm.s_beta,
+    riskfreerate = cm.s_yields,
+    volatility = cm.s_vol,
+    market_cap = cm.calc_market_cap,
+    enterprise_value = cm.calc_ev
+FROM calculated_metrics cm
+WHERE calc.id = cm.pk_id; -- Match on Primary Key
 """
 
     try:
-        extras.execute_values(cur, query, input_data)
+        # We pass the ticker as a secondary argument for the WHERE clause
+        extras.execute_values(cur, query, input_data, template=None, page_size=100, args=(ticker,))
         conn.commit()
-        print(f"Successfully computed and stored data for {ticker} using SQL logic.")
+        print(f"Successfully updated records for {ticker} using primary keys.")
     except Exception as e:
-        print(f"Error during DB calculation: {e}")
+        print(f"Error during DB update: {e}")
         conn.rollback()
     finally:
         cur.close()
@@ -549,10 +544,11 @@ DO UPDATE SET
 
 def copy_dates():
     '''
-    This function creates the SQL functions, executes the sync, 
-    and returns the list of newly inserted dates.
+    Fetches dates from the calc table and returns them as a Python list.
+    No changes are made to the database.
     '''
-    # 1. Setup connection (ensure these variables are defined in your scope)
+    # 1. Setup connection
+    # (Ensure DB_USER, DB_PASSWORD, etc., are defined in your environment)
     conn = psycopg2.connect(
         user=DB_USER,
         password=DB_PASSWORD,
@@ -562,48 +558,82 @@ def copy_dates():
     )
     cur = conn.cursor()
 
-    # 2. SQL to define the functions (Your existing logic)
-    create_functions_query = """
-CREATE OR REPLACE FUNCTION get_calc_statement_dates()
-RETURNS TABLE(out_date DATE) AS $$ 
-BEGIN
-    RETURN QUERY
-    SELECT statement_date
-    FROM calc
-    ORDER BY statement_date DESC; -- Optional: keeps dates chronological for your script
-END;
-$$ LANGUAGE plpgsql;
-    """
-
-    inserted_dates = []
+    dates_list = []
 
     try:
-        # Step A: Create/Update the function in the DB
-        cur.execute(create_functions_query)
+        # 2. Execute a simple SELECT query
+        # Replace 'date_column_name' with the actual name of your column
+        query = "SELECT DISTINCT statement_date FROM income_statement ORDER BY statement_date;"
+        cur.execute(query)
         
-        # Step B: Execute the function and capture the RETURN QUERY results
-        cur.execute("SELECT * FROM sync_balance_sheet_dates_to_calc();")
-        
-        # Step C: Store the returned dates into a list
+        # 3. Store the returned dates into a list
         # .fetchall() returns a list of tuples: [(date1,), (date2,)]
         results = cur.fetchall()
-        inserted_dates = [row[0] for row in results]
+        
+        # Flatten the list of tuples into a simple list
+        dates_list = [row[0] for row in results]
 
-        conn.commit()
-        print(f"Successfully synced {len(inserted_dates)} new dates.")
+        print(f"Successfully retrieved {len(dates_list)} dates.")
         
     except Exception as e:
-        print(f"Error during DB calculation: {e}")
-        conn.rollback()
+        print(f"Error while fetching dates: {e}")
+        # No rollback needed for a SELECT, but good practice if an error occurs
     finally:
+        # 4. Clean up
         cur.close()
         conn.close()
 
-    return inserted_dates
+    return dates_list
 
-# Usage
-# new_dates = copy_dates()
-# print(new_dates)
+def sync_calc_dates():
+    '''
+    Updates the 'calc' table by copying dates from the 'income_statement' table
+    where the records match.
+    '''
+    conn = None
+    try:
+        # 1. Setup connection
+        conn = psycopg2.connect(
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME
+        )
+        cur = conn.cursor()
+
+        # 2. Execute the Update
+        # This assumes both tables have a common identifier, like 'id' or 'ticker'
+        # Adjust the 'WHERE' clause to match your unique identifier
+        query = """
+            UPDATE calc
+            SET statement_date = inc.statement_date
+            FROM income_statement AS inc
+            WHERE calc.id = inc.id 
+            AND calc.statement_date IS NULL;
+        """
+        
+        cur.execute(query)
+        
+        # 3. IMPORTANT: Commit the changes
+        # SELECT doesn't need a commit, but UPDATE definitely does.
+        conn.commit()
+        
+        count = cur.rowcount
+        print(f"Successfully updated {count} rows in the calc table.")
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Error while updating dates: {e}")
+    finally:
+        # 4. Clean up
+        if cur:
+            cur.close()
+        if conn:
+            conn.close()
+
+
 
 def get_betas_for_dates(ticker, dates_list, benchmark='^GSPC', years=3):
     if not dates_list:
@@ -742,10 +772,11 @@ if __name__ == "__main__":
         
         elif cmd == "calc":
             print(f"\nPopulating calculation table for {ticker}...")
-            
+            sync_calc_dates()
             # Get dates from balance sheet table
             dates = copy_dates()
 
+            print(dates)
             print("Fetching beta values...")
             beta = get_betas_for_dates(ticker, dates)
             
@@ -754,9 +785,26 @@ if __name__ == "__main__":
             
             print("Fetching treasury yields...")
             yields = get_treasury_yield_list_fast(dates)
-            
+
+            print("Fetching volatility...")
+            lis = []
+            pri = []
+            vol = []
+            #for date in dates:
+            #    lis = get_last_n_trading_days(date)
+            #    pri = get_closing_prices_list(ticker, lis) 
+            #    temp = calculate_equity_volatility(pri)
+            #    vol.append(temp)
+
+            lis = get_last_n_trading_days(dates[0])
+            pri = get_closing_prices_list(ticker, lis)
+            temp = calculate_equity_volatility(pri)
+            print(temp)
+
+
+            #print(vol)
             print("Inserting data into calc table...")
-            add_data_to_calc_in_db(ticker, dates, beta, prices, yields)
+            #add_data_to_calc_in_db(ticker, dates, beta, prices, yields, vol)
             
             print(f"✓ Calculation table for {ticker} populated successfully!\n")
         

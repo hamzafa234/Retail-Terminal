@@ -9,7 +9,7 @@ create table calc (
     id serial primary key,
     statement_date date not null,
     beta decimal(10, 4),
-    cost_of_capital decimal(10, 4),
+    WAM decimal(10, 4),
     market_cap bigint,
     enterprise_value bigint,
     wacc decimal(10, 4),
@@ -23,10 +23,11 @@ create table calc (
 
 CREATE TABLE debt_info (
     id SERIAL PRIMARY KEY,
-    due_date DATE NOT NULL,
-    amount BIGINT,
+    maturity DATE NOT NULL,
+    principal BIGINT,
     rate DECIMAL(10, 4),
-    debt_security_type VARCHAR(255) 
+    debt_security_type VARCHAR(255),
+    total_debt BIGINT
 );
 -- income statement table
 create table income_statement (

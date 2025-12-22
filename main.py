@@ -14,7 +14,7 @@ import pandas_market_calendars as mcal
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = ""
+DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -98,7 +98,7 @@ def calculate_equity_volatility(price_history):
     daily_std = np.std(daily_returns)
     annualized_vol = daily_std * np.sqrt(252)
 
-    x = round(annualized_vol, 4)
+    x = round(annualized_vol, 7)
     
     return x
 

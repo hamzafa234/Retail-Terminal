@@ -1,52 +1,60 @@
 import psycopg2
 from psycopg2 import sql, extras
-from datetime import date
-from typing import List, Dict, Any
+
 import requests
-from datetime import datetime
-from typing import List, Dict, Optional
 import yfinance as yf
-from datetime import datetime, timedelta
-import pandas_market_calendars as mcal
+
+from datetime import date, datetime, timedelta
+from typing import List, Dict, Any, Optional
+
 import pandas as pd
 import numpy as np
+import pandas_market_calendars as mcal
 
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = "517186"
+DB_PASSWORD = ""
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
 def get_closing_prices_list(ticker_symbol: str, target_dates: list):
-    """
-    Retrieves closing prices for a list of dates.
-    If the exact date isn't available (weekend/holiday), returns the price from the next available trading day.
-    """
+    if not target_dates:
+        return []
+
+    # 1. Prepare date range for a single download
+    start_date = min(target_dates)
+    end_date = max(target_dates) + timedelta(days=8)
+    
     ticker = yf.Ticker(ticker_symbol)
-    prices = []
+    history = ticker.history(start=start_date.strftime('%Y-%m-%d'), 
+                             end=end_date.strftime('%Y-%m-%d'))
     
-    for day in target_dates:
-        # Look ahead up to 7 days to find the next trading day
-        found = False
-        for offset in range(8):  # Check up to 7 days ahead
-            check_date = day + timedelta(days=offset)
-            start_str = check_date.strftime('%Y-%m-%d')
-            end_date = check_date + timedelta(days=1)
-            end_str = end_date.strftime('%Y-%m-%d')
-            
-            df = ticker.history(start=start_str, end=end_str)
-            
-            if not df.empty:
-                closing_price = round(float(df['Close'].iloc[-1]), 3)
-                prices.append(closing_price)
-                found = True
-                break
-        
-        if not found:
-            prices.append(None)  # Only if no trading day found within 7 days
-    
-    return prices
+    if history.empty:
+        return [None] * len(target_dates)
+
+    # Clean history index and sort (required for merge_asof)
+    history.index = history.index.tz_localize(None)
+    history = history[['Close']].reset_index().sort_values('Date')
+
+    # 2. Create DataFrame with original order preserved
+    request_df = pd.DataFrame({
+        'requested_date': pd.to_datetime(target_dates),
+        'original_order': range(len(target_dates)) # Track original index
+    })
+    request_df = request_df.sort_values('requested_date')
+
+    # 3. Use 'forward' direction to find the next available trading day
+    merged = pd.merge_asof(
+        request_df, 
+        history, 
+        left_on='requested_date', 
+        right_on='Date', 
+        direction='forward'  # Changed from 'after' to 'forward'
+    )
+
+    # 4. Sort back to original order and return list
+    return merged.sort_values('original_order')['Close'].round(3).tolist()
 
 
 def get_nyse_trading_dates(start_date, end_date):
@@ -89,8 +97,10 @@ def calculate_equity_volatility(price_history):
     daily_returns = np.log(prices[1:] / prices[:-1])
     daily_std = np.std(daily_returns)
     annualized_vol = daily_std * np.sqrt(252)
+
+    x = round(annualized_vol, 4)
     
-    return annualized_vol
+    return x
 
 def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
     """
@@ -472,21 +482,18 @@ def cleardatabase():
     cursor.close()
     conn.close()
 
-def add_data_to_calc_in_db(ticker: str, record_ids: list, beta_values: list, share_prices: list, yields: list, volatility: list):
+def add_data_to_calc_in_db(ticker: str, statement_dates: list, vol: list, beta_values: list, share_prices: list, yields: list):
     """
-    Updates the calc table by mapping external lists to existing rows via Primary Key.
+    Performs financial calculations directly inside PostgreSQL.
+    Expects beta_values and share_prices to align with statement_dates.
     """
     
-    # 1. Zip data together using the Primary Key (record_ids) as the anchor
+    # 1. Prepare data for the temporary mapping
+    # We need to pass the external data (price/beta) so the DB can join them
+    # with the internal data (shares/debt/cash)
     input_data = []
-    for i in range(len(record_ids)):
-        input_data.append((
-            record_ids[i],        # Primary Key for the row
-            float(share_prices[i]), 
-            float(beta_values[i]), 
-            float(yields[i]),
-            float(volatility[i])
-        ))
+    for i in range(len(statement_dates)):
+        input_data.append((statement_dates[i], float(share_prices[i]), float(beta_values[i]), float(vol[i]), float(yields[i])))
 
     conn = psycopg2.connect(
         user=DB_USER,
@@ -497,46 +504,51 @@ def add_data_to_calc_in_db(ticker: str, record_ids: list, beta_values: list, sha
     )
     cur = conn.cursor()
 
-    # 2. Optimized SQL Query using Primary Key Join
+    # 2. The SQL Query
+    # We use a Common Table Expression (CTE) to join your external price data
+    # with the existing financial statement tables.
     query = """
-WITH external_input (pk_id, s_price, s_beta, s_yields, s_vol) AS (
+WITH external_data (s_date, s_price, s_beta, s_vol, s_yields) AS (
     VALUES %s
-),
-calculated_metrics AS (
-    SELECT 
-        ei.pk_id,
-        ei.s_price,
-        ei.s_beta,
-        ei.s_yields,
-        ei.s_vol,
-        (inc.shares_outstanding * ei.s_price) AS calc_market_cap,
-        ((inc.shares_outstanding * ei.s_price) + 
-         (bal.short_term_debt + bal.long_term_debt) - 
-         bal.cash_and_equivalents) AS calc_ev
-    FROM external_input ei
-    JOIN income_statement inc ON ei.pk_id = inc.id  -- Using Primary Key
-    JOIN balance_sheet bal ON inc.statement_date = bal.statement_date
-    WHERE inc.ticker = %s
 )
-UPDATE calc
-SET 
-    share_price = cm.s_price,
-    beta = cm.s_beta,
-    riskfreerate = cm.s_yields,
-    volatility = cm.s_vol,
-    market_cap = cm.calc_market_cap,
-    enterprise_value = cm.calc_ev
-FROM calculated_metrics cm
-WHERE calc.id = cm.pk_id; -- Match on Primary Key
-"""
+INSERT INTO calc (
+    statement_date, 
+    share_price, 
+    beta, 
+    volatility, 
+    riskfreerate,     -- Use the actual schema name here
+    market_cap, 
+    enterprise_value
+)
+SELECT 
+    ed.s_date,
+    ed.s_price,
+    ed.s_beta,
+    ed.s_vol,
+    ed.s_yields,      -- Mapping your yield data to riskfreerate
+    (inc.shares_outstanding * ed.s_price),
+    ((inc.shares_outstanding * ed.s_price) + 
+     (bal.short_term_debt + bal.long_term_debt) - 
+     bal.cash_and_equivalents)
+FROM external_data ed
+JOIN income_statement inc ON ed.s_date = inc.statement_date
+JOIN balance_sheet bal ON ed.s_date = bal.statement_date
+ON CONFLICT (statement_date) 
+DO UPDATE SET 
+    share_price = EXCLUDED.share_price,
+    beta = EXCLUDED.beta,
+    volatility = EXCLUDED.volatility,
+    riskfreerate = EXCLUDED.riskfreerate, -- This now works because the name matches above
+    market_cap = EXCLUDED.market_cap,
+    enterprise_value = EXCLUDED.enterprise_value;
+    """
 
     try:
-        # We pass the ticker as a secondary argument for the WHERE clause
-        extras.execute_values(cur, query, input_data, template=None, page_size=100, args=(ticker,))
+        extras.execute_values(cur, query, input_data)
         conn.commit()
-        print(f"Successfully updated records for {ticker} using primary keys.")
+        print(f"Successfully computed and stored data for {ticker} using SQL logic.")
     except Exception as e:
-        print(f"Error during DB update: {e}")
+        print(f"Error during DB calculation: {e}")
         conn.rollback()
     finally:
         cur.close()
@@ -591,6 +603,7 @@ def sync_calc_dates():
     where the records match.
     '''
     conn = None
+    cur = None
     try:
         # 1. Setup connection
         conn = psycopg2.connect(
@@ -729,85 +742,66 @@ def get_treasury_yield_list_fast(target_dates: list):
 
 if __name__ == "__main__":
     print("Financial Data Manager")
-    print("Commands:")
-    print("  1. statements <TICKER> - Populate income, cash flow, and balance sheet tables")
-    print("  2. calc <TICKER> - Populate calculation table with beta, prices, and yields")
-    print("  3. exit - Exit the program")
     print()
     
     while True:
-        command = input("Enter command: ").strip().lower()
+        ticker = input("Enter ticker symbol (or 'exit' to quit): ").strip().upper()
         
-        if command == "exit":
+        if ticker.lower() == "exit":
             print("Exiting...")
             break
         
-        parts = command.split()
-        
-        if len(parts) < 2:
-            print("Error: Invalid command format")
-            print("Usage: statements <TICKER> or calc <TICKER>")
+        if not ticker:
+            print("Error: Please enter a valid ticker symbol\n")
             continue
         
-        cmd = parts[0]
-        ticker = parts[1].upper()
+        print(f"\nProcessing {ticker}...")
         
-        if cmd == "statements":
-            print(f"\nPopulating financial statements for {ticker}...")
-            cleardatabase()
-            
-            print("Fetching income statement data...")
-            all_income_data = get_comp_fin(ticker, "income", years=5)
-            insert_multiple_statements(all_income_data, "income")
-            
-            print("Fetching cash flow statement data...")
-            all_cash_data = get_comp_fin(ticker, "cashflow", years=5)
-            insert_multiple_statements(all_cash_data, "cashflow")
-            
-            print("Fetching balance sheet data...")
-            all_balance_data = get_comp_fin(ticker, "balance", years=5)
-            insert_multiple_statements(all_balance_data, "balance")
-            
-            print(f"✓ Financial statements for {ticker} populated successfully!\n")
+        # Populate financial statements
+        print(f"Populating financial statements for {ticker}...")
+        cleardatabase()
         
-        elif cmd == "calc":
-            print(f"\nPopulating calculation table for {ticker}...")
-            sync_calc_dates()
-            # Get dates from balance sheet table
-            dates = copy_dates()
-
-            print(dates)
-            print("Fetching beta values...")
-            beta = get_betas_for_dates(ticker, dates)
-            
-            print("Fetching closing prices...")
-            prices = get_closing_prices_list(ticker, dates)
-            
-            print("Fetching treasury yields...")
-            yields = get_treasury_yield_list_fast(dates)
-
-            print("Fetching volatility...")
-            lis = []
-            pri = []
-            vol = []
-            #for date in dates:
-            #    lis = get_last_n_trading_days(date)
-            #    pri = get_closing_prices_list(ticker, lis) 
-            #    temp = calculate_equity_volatility(pri)
-            #    vol.append(temp)
-
-            lis = get_last_n_trading_days(dates[0])
-            pri = get_closing_prices_list(ticker, lis)
+        print("Fetching income statement data...")
+        all_income_data = get_comp_fin(ticker, "income", years=5)
+        insert_multiple_statements(all_income_data, "income")
+        
+        print("Fetching cash flow statement data...")
+        all_cash_data = get_comp_fin(ticker, "cashflow", years=5)
+        insert_multiple_statements(all_cash_data, "cashflow")
+        
+        print("Fetching balance sheet data...")
+        all_balance_data = get_comp_fin(ticker, "balance", years=5)
+        insert_multiple_statements(all_balance_data, "balance")
+        sync_calc_dates()
+        
+        print(f"✓ Financial statements for {ticker} populated successfully!")
+        
+        # Populate calculation table
+        print(f"\nPopulating calculation table for {ticker}...")
+        dates = copy_dates()
+        print(dates)
+        print("Fetching beta values...")
+        beta = get_betas_for_dates(ticker, dates)
+        
+        print("Fetching closing prices...")
+        prices = get_closing_prices_list(ticker, dates)
+        print(prices)
+        
+        print("Fetching treasury yields...")
+        yields = get_treasury_yield_list_fast(dates)
+        print("Fetching volatility...")
+        lis = []
+        pri = []
+        vol = []
+        for date in dates:
+            lis = get_last_n_trading_days(date)
+            pri = get_closing_prices_list(ticker, lis) 
             temp = calculate_equity_volatility(pri)
-            print(temp)
-
-
-            #print(vol)
-            print("Inserting data into calc table...")
-            #add_data_to_calc_in_db(ticker, dates, beta, prices, yields, vol)
-            
-            print(f"✓ Calculation table for {ticker} populated successfully!\n")
+            vol.append(temp)
+        print(vol)
         
-        else:
-            print(f"Error: Unknown command '{cmd}'")
-            print("Valid commands: statements, calc, exit\n")
+        print("Inserting data into calc table...")
+        add_data_to_calc_in_db(ticker, dates, vol, beta, prices, yields)
+        
+        print(f"✓ Calculation table for {ticker} populated successfully!\n")
+        print(f"All data for {ticker} has been processed!\n")

@@ -16,7 +16,7 @@ create table calc (
     insider_activity bigint,
     unique(statement_date),
     riskfreerate NUMERIC(10, 6),
-    volatility decimal(10, 4),
+    volatility NUMERIC(10, 9),
     share_price decimal(10, 4)
 );
 

@@ -11,13 +11,12 @@ create table calc (
     beta decimal(10, 4),
     WAM decimal(10, 4),
     market_cap bigint,
-    enterprise_value bigint,
-    wacc decimal(10, 4),
-    insider_activity bigint,
     unique(statement_date),
     riskfreerate NUMERIC(10, 6),
     volatility NUMERIC(10, 9),
-    share_price decimal(10, 4)
+    share_price decimal(10, 4),
+    market_val_assets BIGINT,
+    asset_val NUMERIC(10, 9)
 );
 
 

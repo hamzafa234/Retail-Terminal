@@ -11,6 +11,9 @@ import pandas as pd
 import numpy as np
 import pandas_market_calendars as mcal
 
+from scipy.stats import norm
+from scipy.optimize import fsolve
+
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
@@ -647,6 +650,98 @@ def sync_calc_dates():
             conn.close()
 
 
+def default_point(longterm, shortterm):
+    dp = [st + 0.5 * lt for st, lt in zip(shortterm, longterm)]
+    return dp
+
+def solve_merton(E, sigma_E, D, r, T):
+    """
+    Solves for Asset Value (V_A) and Asset Volatility (sigma_A)
+    
+    Parameters:
+    E       : Market value of Equity (Market Cap) - scalar or array-like
+    sigma_E : Volatility of Equity (annualized) - scalar or array-like
+    D       : Face value of Debt (Strike Price) - scalar or array-like
+    r       : Risk-free rate (annualized) - scalar or array-like
+    T       : Time to maturity (usually 1.0 for 1 year) - scalar or array-like
+    
+    Returns:
+    V_A     : Asset Value(s)
+    sigma_A : Asset Volatility(ies)
+    """
+    
+    # Convert inputs to numpy arrays
+    E = np.atleast_1d(E)
+    sigma_E = np.atleast_1d(sigma_E)
+    D = np.atleast_1d(D)
+    r = np.atleast_1d(r)
+    T = np.atleast_1d(T)
+    
+    # Broadcast to common shape
+    shape = np.broadcast_shapes(E.shape, sigma_E.shape, D.shape, r.shape, T.shape)
+    E = np.broadcast_to(E, shape)
+    sigma_E = np.broadcast_to(sigma_E, shape)
+    D = np.broadcast_to(D, shape)
+    r = np.broadcast_to(r, shape)
+    T = np.broadcast_to(T, shape)
+    
+    # Flatten for iteration
+    E_flat = E.flatten()
+    sigma_E_flat = sigma_E.flatten()
+    D_flat = D.flatten()
+    r_flat = r.flatten()
+    T_flat = T.flatten()
+    
+    # Initialize result arrays
+    V_A_results = np.zeros_like(E_flat)
+    sigma_A_results = np.zeros_like(E_flat)
+    
+    # Solve for each set of inputs
+    for i in range(len(E_flat)):
+        E_i = E_flat[i]
+        sigma_E_i = sigma_E_flat[i]
+        D_i = D_flat[i]
+        r_i = r_flat[i]
+        T_i = T_flat[i]
+        
+        # Define the system of two equations
+        def equations(vars):
+            V_A, sigma_A = vars
+            
+            # Prevent negative values during solver iterations
+            if V_A <= 0 or sigma_A <= 0:
+                return [1e10, 1e10]
+            
+            d1 = (np.log(V_A / D_i) + (r_i + 0.5 * sigma_A**2) * T_i) / (sigma_A * np.sqrt(T_i))
+            d2 = d1 - sigma_A * np.sqrt(T_i)
+            
+            # Eq 1: BSM Call Price
+            eq1 = V_A * norm.cdf(d1) - D_i * np.exp(-r_i * T_i) * norm.cdf(d2) - E_i
+            
+            # Eq 2: Volatility Linkage (sigma_E = (V_A/E) * N(d1) * sigma_A)
+            eq2 = (V_A / E_i) * norm.cdf(d1) * sigma_A - sigma_E_i
+            
+            return [eq1, eq2]
+        
+        # Initial Guesses
+        initial_V_A = E_i + D_i
+        initial_sigma_A = sigma_E_i * (E_i / (E_i + D_i))
+        
+        solution = fsolve(equations, [initial_V_A, initial_sigma_A])
+        
+        V_A_results[i] = solution[0]
+        sigma_A_results[i] = solution[1]
+    
+    # Reshape back to original shape
+    V_A_results = V_A_results.reshape(shape)
+    sigma_A_results = sigma_A_results.reshape(shape)
+    
+    # Return scalars if input was scalar
+    if V_A_results.size == 1:
+        return float(V_A_results), float(sigma_A_results)
+    
+    return V_A_results, sigma_A_results
+
 
 def get_betas_for_dates(ticker, dates_list, benchmark='^GSPC', years=3):
     if not dates_list:
@@ -779,13 +874,11 @@ if __name__ == "__main__":
         # Populate calculation table
         print(f"\nPopulating calculation table for {ticker}...")
         dates = copy_dates()
-        print(dates)
         print("Fetching beta values...")
         beta = get_betas_for_dates(ticker, dates)
         
         print("Fetching closing prices...")
         prices = get_closing_prices_list(ticker, dates)
-        print(prices)
         
         print("Fetching treasury yields...")
         yields = get_treasury_yield_list_fast(dates)
@@ -798,8 +891,10 @@ if __name__ == "__main__":
             pri = get_closing_prices_list(ticker, lis) 
             temp = calculate_equity_volatility(pri)
             vol.append(temp)
-        print(vol)
-        
+         
+        solve_merton()
+
+
         print("Inserting data into calc table...")
         add_data_to_calc_in_db(ticker, dates, vol, beta, prices, yields)
         

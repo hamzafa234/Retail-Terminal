@@ -520,8 +520,7 @@ INSERT INTO calc (
     beta, 
     volatility, 
     riskfreerate,     -- Use the actual schema name here
-    market_cap, 
-    enterprise_value
+    market_cap 
 )
 SELECT 
     ed.s_date,
@@ -529,21 +528,16 @@ SELECT
     ed.s_beta,
     ed.s_vol,
     ed.s_yields,      -- Mapping your yield data to riskfreerate
-    (inc.shares_outstanding * ed.s_price),
-    ((inc.shares_outstanding * ed.s_price) + 
-     (bal.short_term_debt + bal.long_term_debt) - 
-     bal.cash_and_equivalents)
+    (inc.shares_outstanding * ed.s_price)
 FROM external_data ed
 JOIN income_statement inc ON ed.s_date = inc.statement_date
-JOIN balance_sheet bal ON ed.s_date = bal.statement_date
 ON CONFLICT (statement_date) 
 DO UPDATE SET 
     share_price = EXCLUDED.share_price,
     beta = EXCLUDED.beta,
     volatility = EXCLUDED.volatility,
     riskfreerate = EXCLUDED.riskfreerate, -- This now works because the name matches above
-    market_cap = EXCLUDED.market_cap,
-    enterprise_value = EXCLUDED.enterprise_value;
+    market_cap = EXCLUDED.market_cap
     """
 
     try:
@@ -649,10 +643,37 @@ def sync_calc_dates():
         if conn:
             conn.close()
 
+def find_default_point():
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(
+            user=DB_USER, password=DB_PASSWORD,
+            host=DB_HOST, port=DB_PORT, database=DB_NAME
+        )
+        cur = conn.cursor()
 
-def default_point(longterm, shortterm):
-    dp = [st + 0.5 * lt for st, lt in zip(shortterm, longterm)]
-    return dp
+        # Direct UPDATE is cleaner and returns the correct rowcount to Python
+        query = """
+        UPDATE calc c
+        SET default_point = COALESCE(bs.total_current_liabilities, 0) + (0.5 * COALESCE(bs.long_term_debt, 0))
+        FROM balance_sheet bs
+        WHERE c.statement_date = bs.statement_date
+        """
+        
+        cur.execute(query)
+        conn.commit()
+        
+        print(f"Successfully updated {cur.rowcount} rows.")
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Error: {e}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
 
 def solve_merton(E, sigma_E, D, r, T):
     """
@@ -891,12 +912,11 @@ if __name__ == "__main__":
             pri = get_closing_prices_list(ticker, lis) 
             temp = calculate_equity_volatility(pri)
             vol.append(temp)
-         
-        solve_merton()
-
-
+        
         print("Inserting data into calc table...")
         add_data_to_calc_in_db(ticker, dates, vol, beta, prices, yields)
-        
+        find_default_point()
+
+
         print(f"✓ Calculation table for {ticker} populated successfully!\n")
         print(f"All data for {ticker} has been processed!\n")

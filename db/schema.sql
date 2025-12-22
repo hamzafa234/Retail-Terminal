@@ -9,14 +9,14 @@ create table calc (
     id serial primary key,
     statement_date date not null,
     beta decimal(10, 4),
-    WAM decimal(10, 4),
     market_cap bigint,
     unique(statement_date),
     riskfreerate NUMERIC(10, 6),
     volatility NUMERIC(10, 9),
     share_price decimal(10, 4),
     market_val_assets BIGINT,
-    asset_val NUMERIC(10, 9)
+    asset_vol NUMERIC(10, 9),
+    default_point BIGINT
 );
 
 

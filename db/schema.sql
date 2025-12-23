@@ -16,7 +16,9 @@ create table calc (
     share_price decimal(10, 4),
     market_val_assets BIGINT,
     asset_vol NUMERIC(10, 9),
-    default_point BIGINT
+    default_point BIGINT,
+    distance_to_default decimal(10, 4),
+    dtd_value decimal(10, 4)
 );
 
 

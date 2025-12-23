@@ -597,48 +597,41 @@ def copy_dates():
     return dates_list
 
 
-def insert_into_db(market_cap_values, target_column):
+
+def insert_into_db(market_cap_list, target_column):
     '''
-    Inserts market cap values into a specified column in the calc table.
-    
-    Args:
-        market_cap_values: List of tuples containing (id, market_cap_value) or 
-                          list of market_cap_value if updating all rows sequentially
-        target_column: Name of the column to insert data into (e.g., 'market_val_assets')
+    Updates the calc table using a simple list of values.
+    Assumes the list order matches the 'id' order in the database.
     '''
-    # 1. Setup connection
     conn = psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME
+        user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT, database=DB_NAME
     )
     cur = conn.cursor()
     
     try:
-        # 2. Update the specified column with market_cap data
-        # Using sql.Identifier to safely inject the column name
-        from psycopg2 import sql
-        
+        # 1. Prepare the data: pair each value with an index or ID
+        # We use enumerate(start=1) assuming your IDs start at 1 and are sequential
+        data_to_update = [(val, i) for i, val in enumerate(market_cap_list, start=1)]
+
+        # 2. Build a batch update query
+        # This updates the table by joining it against the list of values provided
         query = sql.SQL("""
-            UPDATE calc 
-            SET {} = %s 
-            WHERE id = %s;
-        """).format(sql.Identifier(target_column))
+            UPDATE calc AS c
+            SET {col} = data.new_val
+            FROM (VALUES %s) AS data (new_val, id)
+            WHERE c.id = data.id;
+        """).format(col=sql.Identifier(target_column))
         
-        # If market_cap_values is a list of tuples: [(value1, id1), (value2, id2), ...]
-        cur.executemany(query, market_cap_values)
+        # 3. Use extras.execute_values for high performance
+        extras.execute_values(cur, query, data_to_update)
         
-        # Commit the transaction
         conn.commit()
-        print(f"Successfully updated {cur.rowcount} rows in column '{target_column}'.")
+        print(f"Successfully updated {len(market_cap_list)} rows in '{target_column}'.")
         
     except Exception as e:
-        print(f"Error while updating {target_column}: {e}")
-        conn.rollback()  # Rollback on error
+        print(f"Error: {e}")
+        conn.rollback()
     finally:
-        # 3. Clean up
         cur.close()
         conn.close()
 
@@ -682,6 +675,77 @@ def copy_cap():
         conn.close()
     return dates_list
 
+
+def calc_percentage():
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(
+            user=DB_USER, password=DB_PASSWORD, host=DB_HOST, 
+            port=DB_PORT, database=DB_NAME
+        )
+        cur = conn.cursor()
+
+        # Perform an UPDATE instead of a SELECT
+        # This joins the 'calc' table with the source data table
+        query = """
+SELECT 
+    dtd_value,
+    -- The formula for PD using the error function
+    0.5 * (1 + SET_LIMIT(0) + erf(-dtd_value / sqrt(2))) * 100 AS pd_percentage
+FROM 
+    calc;
+        """
+        
+        cur.execute(query)
+        conn.commit()
+        
+        print(f"Successfully updated {cur.rowcount} rows.")
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Error: {e}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+
+def calc_dd():
+    conn = None
+    cur = None
+    try:
+        conn = psycopg2.connect(
+            user=DB_USER, password=DB_PASSWORD, host=DB_HOST, 
+            port=DB_PORT, database=DB_NAME
+        )
+        cur = conn.cursor()
+
+        # Perform an UPDATE instead of a SELECT
+        # This joins the 'calc' table with the source data table
+        query = """
+        UPDATE calc
+        SET 
+            statement_date = src.statement_date,
+            distance_to_default = (LN(calc.market_val_assets / calc.default_point) + 
+                                  (calc.riskfreerate - 0.5 * POWER(calc.asset_vol, 2)) * 1.0) 
+                                  / (calc.asset_vol * SQRT(1.0))
+        FROM income_statement AS src
+        WHERE calc.id = src.id;
+        """
+        
+        cur.execute(query)
+        conn.commit()
+        
+        print(f"Successfully updated {cur.rowcount} rows.")
+
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        print(f"Error: {e}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
 
 def sync_calc_dates():
     '''
@@ -1019,10 +1083,14 @@ if __name__ == "__main__":
         cap = copy_cap()
         cap = list(map(float, cap))
         mer = []
-        year = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
-        mer = solve_merton(cap, vol, default_points, yields, year)
-        print(mer[0])
-        print(mer[1])
-
+        mer = solve_merton(cap, vol, default_points, yields, 1)
+        one = mer[0]
+        two = mer[1]
+        one = [int(f) for f in one]
+        two = [float(x) for x in two]
+        insert_into_db(one, 'market_val_assets')
+        insert_into_db(two, 'asset_vol')
+        calc_dd()
+        calc_percentage()
         print(f"✓ Calculation table for {ticker} populated successfully!\n")
         print(f"All data for {ticker} has been processed!\n")

@@ -596,6 +596,52 @@ def copy_dates():
 
     return dates_list
 
+
+def insert_into_db(market_cap_values, target_column):
+    '''
+    Inserts market cap values into a specified column in the calc table.
+    
+    Args:
+        market_cap_values: List of tuples containing (id, market_cap_value) or 
+                          list of market_cap_value if updating all rows sequentially
+        target_column: Name of the column to insert data into (e.g., 'market_val_assets')
+    '''
+    # 1. Setup connection
+    conn = psycopg2.connect(
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME
+    )
+    cur = conn.cursor()
+    
+    try:
+        # 2. Update the specified column with market_cap data
+        # Using sql.Identifier to safely inject the column name
+        from psycopg2 import sql
+        
+        query = sql.SQL("""
+            UPDATE calc 
+            SET {} = %s 
+            WHERE id = %s;
+        """).format(sql.Identifier(target_column))
+        
+        # If market_cap_values is a list of tuples: [(value1, id1), (value2, id2), ...]
+        cur.executemany(query, market_cap_values)
+        
+        # Commit the transaction
+        conn.commit()
+        print(f"Successfully updated {cur.rowcount} rows in column '{target_column}'.")
+        
+    except Exception as e:
+        print(f"Error while updating {target_column}: {e}")
+        conn.rollback()  # Rollback on error
+    finally:
+        # 3. Clean up
+        cur.close()
+        conn.close()
+
 def copy_cap():
     '''
     '''
@@ -972,8 +1018,8 @@ if __name__ == "__main__":
         cap = copy_cap()
         mer = []
         mer = solve_merton(cap, vol, default_points, yields, 1)
-        print(mer)
-
+        print(mer[0])
+        print(mer[1])
 
         print(f"✓ Calculation table for {ticker} populated successfully!\n")
         print(f"All data for {ticker} has been processed!\n")

@@ -956,7 +956,8 @@ def get_treasury_yield_list_fast(target_dates: list):
 if __name__ == "__main__":
     print("Financial Data Manager")
     print()
-    
+
+
     while True:
         ticker = input("Enter ticker symbol (or 'exit' to quit): ").strip().upper()
         
@@ -1016,8 +1017,10 @@ if __name__ == "__main__":
         default_points = find_default_point()
         cap = []
         cap = copy_cap()
+        cap = list(map(float, cap))
         mer = []
-        mer = solve_merton(cap, vol, default_points, yields, 1)
+        year = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        mer = solve_merton(cap, vol, default_points, yields, year)
         print(mer[0])
         print(mer[1])
 

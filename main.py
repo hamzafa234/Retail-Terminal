@@ -519,7 +519,7 @@ INSERT INTO calc (
     share_price, 
     beta, 
     volatility, 
-    riskfreerate,     -- Use the actual schema name here
+    riskfreerate,     
     market_cap 
 )
 SELECT 
@@ -527,7 +527,7 @@ SELECT
     ed.s_price,
     ed.s_beta,
     ed.s_vol,
-    ed.s_yields,      -- Mapping your yield data to riskfreerate
+    ed.s_yields,      
     (inc.shares_outstanding * ed.s_price)
 FROM external_data ed
 JOIN income_statement inc ON ed.s_date = inc.statement_date
@@ -542,8 +542,10 @@ DO UPDATE SET
 
     try:
         extras.execute_values(cur, query, input_data)
+
         conn.commit()
         print(f"Successfully computed and stored data for {ticker} using SQL logic.")
+
     except Exception as e:
         print(f"Error during DB calculation: {e}")
         conn.rollback()
@@ -593,6 +595,47 @@ def copy_dates():
         conn.close()
 
     return dates_list
+
+def copy_cap():
+    '''
+    '''
+    # 1. Setup connection
+    # (Ensure DB_USER, DB_PASSWORD, etc., are defined in your environment)
+    conn = psycopg2.connect(
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME
+    )
+    cur = conn.cursor()
+
+    dates_list = []
+
+    try:
+        # 2. Execute a simple SELECT query
+        # Replace 'date_column_name' with the actual name of your column
+        query = "SELECT DISTINCT market_cap FROM calc;"
+        cur.execute(query)
+        
+        # 3. Store the returned dates into a list
+        # .fetchall() returns a list of tuples: [(date1,), (date2,)]
+        results = cur.fetchall()
+        
+        # Flatten the list of tuples into a simple list
+        dates_list = [row[0] for row in results]
+
+        print(f"Successfully retrieved {len(dates_list)} dates.")
+        
+    except Exception as e:
+        print(f"Error while fetching dates: {e}")
+        # No rollback needed for a SELECT, but good practice if an error occurs
+    finally:
+        # 4. Clean up
+        cur.close()
+        conn.close()
+    return dates_list
+
 
 def sync_calc_dates():
     '''
@@ -646,6 +689,8 @@ def sync_calc_dates():
 def find_default_point():
     conn = None
     cur = None
+    results = []  # Initialize an empty list to store the results
+    
     try:
         conn = psycopg2.connect(
             user=DB_USER, password=DB_PASSWORD,
@@ -653,18 +698,22 @@ def find_default_point():
         )
         cur = conn.cursor()
 
-        # Direct UPDATE is cleaner and returns the correct rowcount to Python
+        # Added "RETURNING default_point" to the end of the query
         query = """
         UPDATE calc c
         SET default_point = COALESCE(bs.total_current_liabilities, 0) + (0.5 * COALESCE(bs.long_term_debt, 0))
         FROM balance_sheet bs
         WHERE c.statement_date = bs.statement_date
+        RETURNING c.default_point
         """
         
         cur.execute(query)
-        conn.commit()
         
-        print(f"Successfully updated {cur.rowcount} rows.")
+        # Fetch all the updated values from the cursor
+        results = [row[0] for row in cur.fetchall()]
+        
+        conn.commit()
+        print(f"Successfully updated {len(results)} rows.")
 
     except Exception as e:
         if conn:
@@ -673,6 +722,8 @@ def find_default_point():
     finally:
         if cur: cur.close()
         if conn: conn.close()
+    
+    return results # Return the list to your script
 
 
 def solve_merton(E, sigma_E, D, r, T):
@@ -907,6 +958,7 @@ if __name__ == "__main__":
         lis = []
         pri = []
         vol = []
+        default_points = []
         for date in dates:
             lis = get_last_n_trading_days(date)
             pri = get_closing_prices_list(ticker, lis) 
@@ -915,7 +967,12 @@ if __name__ == "__main__":
         
         print("Inserting data into calc table...")
         add_data_to_calc_in_db(ticker, dates, vol, beta, prices, yields)
-        find_default_point()
+        default_points = find_default_point()
+        cap = []
+        cap = copy_cap()
+        mer = []
+        mer = solve_merton(cap, vol, default_points, yields, 1)
+        print(mer)
 
 
         print(f"✓ Calculation table for {ticker} populated successfully!\n")

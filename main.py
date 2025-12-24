@@ -485,130 +485,90 @@ def cleardatabase():
     cursor.close()
     conn.close()
 
-def add_data_to_calc_in_db(ticker: str, statement_dates: list, vol: list, beta_values: list, share_prices: list, yields: list):
-    """
-    Performs financial calculations directly inside PostgreSQL.
-    Expects beta_values and share_prices to align with statement_dates.
-    """
-    
-    # 1. Prepare data for the temporary mapping
-    # We need to pass the external data (price/beta) so the DB can join them
-    # with the internal data (shares/debt/cash)
-    input_data = []
-    for i in range(len(statement_dates)):
-        input_data.append((statement_dates[i], float(share_prices[i]), float(beta_values[i]), float(vol[i]), float(yields[i])))
 
+def copy_dates(latest: date):
+    """
+    Shifts existing IDs, inserts the new date as ID 1 in income_statement,
+    copies all data from ID 2 to ID 1 (except date), syncs calc table with
+    income_statement dates and IDs, and returns all unique dates.
+    """
     conn = psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME
+        user=DB_USER, password=DB_PASSWORD,
+        host=DB_HOST, port=DB_PORT, database=DB_NAME
     )
     cur = conn.cursor()
-
-    # 2. The SQL Query
-    # We use a Common Table Expression (CTE) to join your external price data
-    # with the existing financial statement tables.
-    query = """
-WITH external_data (s_date, s_price, s_beta, s_vol, s_yields) AS (
-    VALUES %s
-)
-INSERT INTO calc (
-    statement_date, 
-    share_price, 
-    beta, 
-    volatility, 
-    riskfreerate,     
-    market_cap 
-)
-SELECT 
-    ed.s_date,
-    ed.s_price,
-    ed.s_beta,
-    ed.s_vol,
-    ed.s_yields,      
-    (inc.shares_outstanding * ed.s_price)
-FROM external_data ed
-JOIN income_statement inc ON ed.s_date = inc.statement_date
-JOIN balance_sheet bs ON ed.s_date = bs.statement_date  -- Added Join
-ON CONFLICT (statement_date) 
-DO UPDATE SET 
-    share_price = EXCLUDED.share_price,
-    beta = EXCLUDED.beta,
-    volatility = EXCLUDED.volatility,
-    riskfreerate = EXCLUDED.riskfreerate,
-    market_cap = EXCLUDED.market_cap;
-    """
-
-    try:
-        extras.execute_values(cur, query, input_data)
-
-        conn.commit()
-        print(f"Successfully computed and stored data for {ticker} using SQL logic.")
-
-    except Exception as e:
-        print(f"Error during DB calculation: {e}")
-        conn.rollback()
-    finally:
-        cur.close()
-        conn.close()
-
-def copy_dates(lateest: datetime.date):
-    '''
-    Fetches dates from the calc table and returns them as a Python list.
-    No changes are made to the database.
-    '''
-    # 1. Setup connection
-    # (Ensure DB_USER, DB_PASSWORD, etc., are defined in your environment)
-    conn = psycopg2.connect(
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT,
-        database=DB_NAME
-    )
-    cur = conn.cursor()
-
     dates_list = []
-
     try:
-        # 2. Execute a simple SELECT query
-        # Replace 'date_column_name' with the actual name of your column
-
-        insert_query = "INSERT INTO calc (statement_date) VALUES (%s);"
-        cur.execute(insert_query, (latest,))
-        
-        # IMPORTANT: You must commit to save changes to the DB
-        conn.commit()
-
-        query = """
-
-SELECT statement_date 
-FROM income_statement 
-GROUP BY statement_date 
-ORDER BY statement_date;
-
+        # 1. Shift IDs to make room for ID 1
+        shift_ids_query = """
+UPDATE income_statement SET id = -id - 1;
+UPDATE income_statement SET id = -id;
         """
-        cur.execute(query)
+        cur.execute(shift_ids_query)
         
-        # 3. Store the returned dates into a list
-        # .fetchall() returns a list of tuples: [(date1,), (date2,)]
+        # 2. Insert the new record with id = 1
+        insert_income_query = """
+            INSERT INTO income_statement (id, statement_date) 
+            VALUES (1, %s);
+        """
+        cur.execute(insert_income_query, (latest,))
+        
+        # 3. Copy all columns from ID 2 to ID 1 (except id and statement_date)
+        copy_data_query = """
+            UPDATE income_statement AS target
+            SET (revenue, cost_of_revenue, gross_profit, operating_expenses, 
+                 research_development, selling_general_administrative, operating_income, interest_expense, interest_income, other_income_expense, income_before_tax, income_tax_expense, net_income, eps, diluted_eps, shares_outstanding, diluted_shares_outstanding) = 
+                (SELECT COALESCE(revenue, 0), 
+                        COALESCE(cost_of_revenue, 0), 
+                        COALESCE(gross_profit, 0), 
+                        COALESCE(operating_expenses, 0),
+                        COALESCE(research_development, 0), 
+                        COALESCE(selling_general_administrative, 0), 
+                        COALESCE(operating_income, 0), 
+                        COALESCE(interest_expense, 0),
+                        COALESCE(interest_income, 0),
+                        COALESCE(other_income_expense, 0), 
+                        COALESCE(income_before_tax, 0),
+                        COALESCE(income_tax_expense, 0),
+                        COALESCE(net_income, 0),
+                        COALESCE(eps, 0),
+                        COALESCE(diluted_eps, 0),
+                        COALESCE(shares_outstanding, 0),
+                        COALESCE(diluted_shares_outstanding, 0)
+                 FROM income_statement WHERE id = 2)
+            WHERE target.id = 1;
+        """
+        cur.execute(copy_data_query)
+        
+        # 4. Clear calc table and copy all dates and IDs from income_statement
+        sync_calc_query = """
+            DELETE FROM calc;
+            INSERT INTO calc (id, statement_date)
+            SELECT id, statement_date 
+            FROM income_statement
+            ORDER BY id;
+        """
+        cur.execute(sync_calc_query)
+        
+        # 5. Fetch the list of unique dates
+        fetch_query = """
+            SELECT statement_date 
+            FROM income_statement 
+            GROUP BY statement_date 
+            ORDER BY statement_date DESC;
+        """
+        cur.execute(fetch_query)
         results = cur.fetchall()
-        
-        # Flatten the list of tuples into a simple list
         dates_list = [row[0] for row in results]
-
-        print(f"Successfully retrieved {len(dates_list)} dates.")
         
+        conn.commit()
+        print(f"Successfully processed dates. Retrieved {len(dates_list)} records.")
     except Exception as e:
-        print(f"Error while fetching dates: {e}")
-        # No rollback needed for a SELECT, but good practice if an error occurs
+        print(f"Error: {e}")
+        conn.rollback() 
     finally:
-        # 4. Clean up
         cur.close()
         conn.close()
-
     return dates_list
 
 
@@ -1108,7 +1068,12 @@ if __name__ == "__main__":
             temp = calculate_equity_volatility(pri)
             vol.append(temp)
         print("Inserting data into calc table...")
-        add_data_to_calc_in_db(ticker, dates, vol, beta, prices, yields)
+        insert_into_db(vol, "volatility")
+        insert_into_db(beta, "beta")
+        insert_into_db(prices, "share_price")
+        insert_into_db(yields, "riskfreerate")
+
+
         default_points = find_default_point()
         cap = []
         cap = copy_cap()

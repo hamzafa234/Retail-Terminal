@@ -780,15 +780,10 @@ def find_default_point():
         SET default_point = COALESCE(bs.total_current_liabilities, 0) + (0.5 * COALESCE(bs.long_term_debt, 0))
         FROM balance_sheet bs
         WHERE c.statement_date = bs.statement_date
-        RETURNING c.default_point
         """
         
         cur.execute(query1)
-        
-        # Fetch all the updated values from the cursor
-        results = [row[0] for row in cur.fetchall()]
-        
-        print(f"Successfully updated {len(results)} rows in first query.")
+        print(f"Successfully updated {cur.rowcount} rows in first query.")
         
         # Second query: Copy default_point from row id 2 to row id 1
         query2 = """
@@ -804,6 +799,20 @@ def find_default_point():
         cur.execute(query2)
         print(f"Successfully copied default_point from row 2 to row 1.")
         
+        # Third query: Select all default_points from calc table
+        query3 = """
+        SELECT default_point
+        FROM calc
+        ORDER BY id
+        """
+        
+        cur.execute(query3)
+        
+        # Fetch all the default_point values
+        results = [row[0] for row in cur.fetchall()]
+        
+        print(f"Retrieved {len(results)} default_point values.")
+        
         conn.commit()
     except Exception as e:
         if conn:
@@ -813,7 +822,7 @@ def find_default_point():
         if cur: cur.close()
         if conn: conn.close()
    
-    return results  # Return the list to your script
+    return results  # Return the list of all default_points
 
 
 def solve_merton(E, sigma_E, D, r, T):
@@ -1073,8 +1082,6 @@ if __name__ == "__main__":
         latest = get_last_nyse_open_date()
         dates = copy_dates(latest)
 
-        dates.append(latest)
-        print(dates)
 
         print("Fetching beta values...")
         beta = get_betas_for_dates(ticker, dates)
@@ -1095,7 +1102,6 @@ if __name__ == "__main__":
             temp = calculate_equity_volatility(pri)
             vol.append(temp)
 
-        print(vol)
         vol = list(map(float, vol))
         print("Inserting data into calc table...")
         insert_into_db(vol, "volatility")
@@ -1109,6 +1115,10 @@ if __name__ == "__main__":
         cap = []
         cap = copy_cap()
         cap = list(map(float, cap))
+        print(len(default_points))
+        print(len(vol))
+        print(len(cap))
+        print(len(yields))
         mer = []
         mer = solve_merton(cap, vol, default_points, yields, 1)
         one = mer[0]

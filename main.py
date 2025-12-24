@@ -598,7 +598,7 @@ def copy_dates():
 
 
 
-def insert_into_db(market_cap_list, target_column):
+def insert_into_db(data_list, target_column):
     '''
     Updates the calc table using a simple list of values.
     Assumes the list order matches the 'id' order in the database.
@@ -611,7 +611,7 @@ def insert_into_db(market_cap_list, target_column):
     try:
         # 1. Prepare the data: pair each value with an index or ID
         # We use enumerate(start=1) assuming your IDs start at 1 and are sequential
-        data_to_update = [(val, i) for i, val in enumerate(market_cap_list, start=1)]
+        data_to_update = [(val, i) for i, val in enumerate(data_list, start=1)]
 
         # 2. Build a batch update query
         # This updates the table by joining it against the list of values provided
@@ -626,7 +626,6 @@ def insert_into_db(market_cap_list, target_column):
         extras.execute_values(cur, query, data_to_update)
         
         conn.commit()
-        print(f"Successfully updated {len(market_cap_list)} rows in '{target_column}'.")
         
     except Exception as e:
         print(f"Error: {e}")
@@ -675,45 +674,17 @@ def copy_cap():
         conn.close()
     return dates_list
 
-
-def calc_percentage():
-    conn = None
-    cur = None
-    try:
-        conn = psycopg2.connect(
-            user=DB_USER, password=DB_PASSWORD, host=DB_HOST, 
-            port=DB_PORT, database=DB_NAME
-        )
-        cur = conn.cursor()
-
-        # Perform an UPDATE instead of a SELECT
-        # This joins the 'calc' table with the source data table
-        query = """
-SELECT 
-    dtd_value,
-    -- The formula for PD using the error function
-    0.5 * (1 + SET_LIMIT(0) + erf(-dtd_value / sqrt(2))) * 100 AS pd_percentage
-FROM 
-    calc;
-        """
-        
-        cur.execute(query)
-        conn.commit()
-        
-        print(f"Successfully updated {cur.rowcount} rows.")
-
-    except Exception as e:
-        if conn:
-            conn.rollback()
-        print(f"Error: {e}")
-    finally:
-        if cur: cur.close()
-        if conn: conn.close()
-
+def get_probabilities(dd_list):
+    # norm.cdf is vectorized, so passing the list directly is the fastest method
+    pd_list = norm.cdf([-d for d in dd_list]).tolist()
+    pd_list = [round(x, 4) for x in pd_list]
+    return pd_list
 
 def calc_dd():
     conn = None
     cur = None
+    updated_data = [] # Initialize a list to hold the results
+    
     try:
         conn = psycopg2.connect(
             user=DB_USER, password=DB_PASSWORD, host=DB_HOST, 
@@ -721,8 +692,7 @@ def calc_dd():
         )
         cur = conn.cursor()
 
-        # Perform an UPDATE instead of a SELECT
-        # This joins the 'calc' table with the source data table
+        # Added "RETURNING *" at the end of the query
         query = """
         UPDATE calc
         SET 
@@ -731,13 +701,17 @@ def calc_dd():
                                   (calc.riskfreerate - 0.5 * POWER(calc.asset_vol, 2)) * 1.0) 
                                   / (calc.asset_vol * SQRT(1.0))
         FROM income_statement AS src
-        WHERE calc.id = src.id;
+        WHERE calc.id = src.id
+        RETURNING calc.distance_to_default;
         """
         
         cur.execute(query)
-        conn.commit()
         
-        print(f"Successfully updated {cur.rowcount} rows.")
+        # Fetch all the updated rows into your Python list
+        updated_data = cur.fetchall()
+        
+        conn.commit()
+        print(f"Successfully updated and retrieved {len(updated_data)} rows.")
 
     except Exception as e:
         if conn:
@@ -746,6 +720,10 @@ def calc_dd():
     finally:
         if cur: cur.close()
         if conn: conn.close()
+   
+    nums = [item[0] for item in updated_data]
+    float_list = list(map(float, nums))
+    return float_list 
 
 def sync_calc_dates():
     '''
@@ -832,7 +810,7 @@ def find_default_point():
     finally:
         if cur: cur.close()
         if conn: conn.close()
-    
+   
     return results # Return the list to your script
 
 
@@ -1090,7 +1068,10 @@ if __name__ == "__main__":
         two = [float(x) for x in two]
         insert_into_db(one, 'market_val_assets')
         insert_into_db(two, 'asset_vol')
-        calc_dd()
-        calc_percentage()
+        std = calc_dd()
+        print(std)
+        percent = get_probabilities(std)
+        print(percent)
+        insert_into_db(percent, "dtd_value")
         print(f"✓ Calculation table for {ticker} populated successfully!\n")
         print(f"All data for {ticker} has been processed!\n")

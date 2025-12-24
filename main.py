@@ -611,6 +611,7 @@ def insert_into_db(data_list, target_column):
 
 def copy_cap():
     '''
+    Calculates market cap and retrieves distinct market cap values.
     '''
     # 1. Setup connection
     # (Ensure DB_USER, DB_PASSWORD, etc., are defined in your environment)
@@ -622,29 +623,40 @@ def copy_cap():
         database=DB_NAME
     )
     cur = conn.cursor()
-
     dates_list = []
-
     try:
-        # 2. Execute a simple SELECT query
-        # Replace 'date_column_name' with the actual name of your column
+        # 2. Calculate market cap and update the calc table
+        # JOIN income_statement (shares_outstanding) with calc (share_price)
+        # Assuming both tables have a common key like 'date' or 'company_id'
+        # Adjust the JOIN condition based on your actual schema
+        update_query = """
+            UPDATE calc
+            SET market_cap = calc.share_price * income_statement.shares_outstanding
+            FROM income_statement
+            WHERE calc.id = income_statement.id
+              AND calc.statement_date = income_statement.statement_date;
+        """
+        cur.execute(update_query)
+        conn.commit()
+        print(f"Market cap calculated and updated for {cur.rowcount} rows.")
+        
+        # 3. Execute the SELECT query to retrieve distinct market caps
         query = "SELECT DISTINCT market_cap FROM calc;"
         cur.execute(query)
         
-        # 3. Store the returned dates into a list
-        # .fetchall() returns a list of tuples: [(date1,), (date2,)]
+        # 4. Store the returned market caps into a list
+        # .fetchall() returns a list of tuples: [(cap1,), (cap2,)]
         results = cur.fetchall()
         
         # Flatten the list of tuples into a simple list
         dates_list = [row[0] for row in results]
-
-        print(f"Successfully retrieved {len(dates_list)} dates.")
+        print(f"Successfully retrieved {len(dates_list)} distinct market cap values.")
         
     except Exception as e:
-        print(f"Error while fetching dates: {e}")
-        # No rollback needed for a SELECT, but good practice if an error occurs
+        print(f"Error while processing: {e}")
+        conn.rollback()  # Rollback in case of error
     finally:
-        # 4. Clean up
+        # 5. Clean up
         cur.close()
         conn.close()
     return dates_list
@@ -749,6 +761,7 @@ def sync_calc_dates():
         if conn:
             conn.close()
 
+
 def find_default_point():
     conn = None
     cur = None
@@ -760,9 +773,9 @@ def find_default_point():
             host=DB_HOST, port=DB_PORT, database=DB_NAME
         )
         cur = conn.cursor()
-
-        # Added "RETURNING default_point" to the end of the query
-        query = """
+        
+        # First query: Update default_point based on balance_sheet
+        query1 = """
         UPDATE calc c
         SET default_point = COALESCE(bs.total_current_liabilities, 0) + (0.5 * COALESCE(bs.long_term_debt, 0))
         FROM balance_sheet bs
@@ -770,14 +783,28 @@ def find_default_point():
         RETURNING c.default_point
         """
         
-        cur.execute(query)
+        cur.execute(query1)
         
         # Fetch all the updated values from the cursor
         results = [row[0] for row in cur.fetchall()]
         
+        print(f"Successfully updated {len(results)} rows in first query.")
+        
+        # Second query: Copy default_point from row id 2 to row id 1
+        query2 = """
+        UPDATE calc
+        SET default_point = (
+            SELECT default_point 
+            FROM calc 
+            WHERE id = 2
+        )
+        WHERE id = 1
+        """
+        
+        cur.execute(query2)
+        print(f"Successfully copied default_point from row 2 to row 1.")
+        
         conn.commit()
-        print(f"Successfully updated {len(results)} rows.")
-
     except Exception as e:
         if conn:
             conn.rollback()
@@ -786,7 +813,7 @@ def find_default_point():
         if cur: cur.close()
         if conn: conn.close()
    
-    return results # Return the list to your script
+    return results  # Return the list to your script
 
 
 def solve_merton(E, sigma_E, D, r, T):
@@ -1067,11 +1094,15 @@ if __name__ == "__main__":
             pri = get_closing_prices_list(ticker, lis) 
             temp = calculate_equity_volatility(pri)
             vol.append(temp)
+
+        print(vol)
+        vol = list(map(float, vol))
         print("Inserting data into calc table...")
         insert_into_db(vol, "volatility")
         insert_into_db(beta, "beta")
         insert_into_db(prices, "share_price")
         insert_into_db(yields, "riskfreerate")
+
 
 
         default_points = find_default_point()

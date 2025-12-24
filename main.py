@@ -998,8 +998,6 @@ def get_treasury_yield_list_fast(target_dates: list):
 if __name__ == "__main__":
     print("Financial Data Manager")
     print()
-
-
     while True:
         ticker = input("Enter ticker symbol (or 'exit' to quit): ").strip().upper()
         
@@ -1011,22 +1009,34 @@ if __name__ == "__main__":
             print("Error: Please enter a valid ticker symbol\n")
             continue
         
-        print(f"\nProcessing {ticker}...")
+        # Prompt for number of years
+        while True:
+            years_input = input("Enter number of years of data (1-10): ").strip()
+            try:
+                years = int(years_input)
+                if 1 <= years <= 10:
+                    break
+                else:
+                    print("Error: Please enter a number between 1 and 10")
+            except ValueError:
+                print("Error: Please enter a valid number")
+        
+        print(f"\nProcessing {ticker} for {years} years of data...")
         
         # Populate financial statements
         print(f"Populating financial statements for {ticker}...")
         cleardatabase()
         
         print("Fetching income statement data...")
-        all_income_data = get_comp_fin(ticker, "income", years=5)
+        all_income_data = get_comp_fin(ticker, "income", years=years)
         insert_multiple_statements(all_income_data, "income")
         
         print("Fetching cash flow statement data...")
-        all_cash_data = get_comp_fin(ticker, "cashflow", years=5)
+        all_cash_data = get_comp_fin(ticker, "cashflow", years=years)
         insert_multiple_statements(all_cash_data, "cashflow")
         
         print("Fetching balance sheet data...")
-        all_balance_data = get_comp_fin(ticker, "balance", years=5)
+        all_balance_data = get_comp_fin(ticker, "balance", years=years)
         insert_multiple_statements(all_balance_data, "balance")
         sync_calc_dates()
         

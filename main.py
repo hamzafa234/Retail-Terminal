@@ -531,13 +531,14 @@ SELECT
     (inc.shares_outstanding * ed.s_price)
 FROM external_data ed
 JOIN income_statement inc ON ed.s_date = inc.statement_date
+JOIN balance_sheet bs ON ed.s_date = bs.statement_date  -- Added Join
 ON CONFLICT (statement_date) 
 DO UPDATE SET 
     share_price = EXCLUDED.share_price,
     beta = EXCLUDED.beta,
     volatility = EXCLUDED.volatility,
-    riskfreerate = EXCLUDED.riskfreerate, -- This now works because the name matches above
-    market_cap = EXCLUDED.market_cap
+    riskfreerate = EXCLUDED.riskfreerate,
+    market_cap = EXCLUDED.market_cap;
     """
 
     try:
@@ -553,7 +554,7 @@ DO UPDATE SET
         cur.close()
         conn.close()
 
-def copy_dates():
+def copy_dates(lateest: datetime.date):
     '''
     Fetches dates from the calc table and returns them as a Python list.
     No changes are made to the database.
@@ -574,6 +575,13 @@ def copy_dates():
     try:
         # 2. Execute a simple SELECT query
         # Replace 'date_column_name' with the actual name of your column
+
+        insert_query = "INSERT INTO calc (statement_date) VALUES (%s);"
+        cur.execute(insert_query, (latest,))
+        
+        # IMPORTANT: You must commit to save changes to the DB
+        conn.commit()
+
         query = """
 
 SELECT statement_date 
@@ -1076,7 +1084,7 @@ if __name__ == "__main__":
         # Populate calculation table
         print(f"\nPopulating calculation table for {ticker}...")
         latest = get_last_nyse_open_date()
-        dates = copy_dates()
+        dates = copy_dates(latest)
 
         dates.append(latest)
         print(dates)
@@ -1099,7 +1107,6 @@ if __name__ == "__main__":
             pri = get_closing_prices_list(ticker, lis) 
             temp = calculate_equity_volatility(pri)
             vol.append(temp)
-        
         print("Inserting data into calc table...")
         add_data_to_calc_in_db(ticker, dates, vol, beta, prices, yields)
         default_points = find_default_point()

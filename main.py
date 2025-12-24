@@ -441,7 +441,7 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
         # Insert into the main statement table
         extras.execute_values(
             cur,
-            sql.SQL("INSERT INTO {} ({}) VALUES %s").format(
+            sql.SQL("INSERT INTO {} ({}) VALUES %s ").format(
                 table_name, 
                 column_identifiers
                 ),
@@ -574,7 +574,14 @@ def copy_dates():
     try:
         # 2. Execute a simple SELECT query
         # Replace 'date_column_name' with the actual name of your column
-        query = "SELECT DISTINCT statement_date FROM income_statement ORDER BY statement_date;"
+        query = """
+
+SELECT statement_date 
+FROM income_statement 
+GROUP BY statement_date 
+ORDER BY statement_date;
+
+        """
         cur.execute(query)
         
         # 3. Store the returned dates into a list
@@ -993,6 +1000,30 @@ def get_treasury_yield_list_fast(target_dates: list):
     # e.g., 4.25 -> 0.0425
     return [round(float(val) / 100, 5) if pd.notnull(val) else None for val in optimized_series]
 
+def get_last_nyse_open_date():
+    # 1. Get the NYSE calendar
+    nyse = mcal.get_calendar('NYSE')
+    
+    # 2. Define a search range
+    end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=10)
+    
+    # 3. Get the schedule
+    schedule = nyse.schedule(start_date=start_date, end_date=end_date)
+    
+    # 4. Get the current time in UTC to compare against the closing times
+    now_utc = pd.Timestamp.now(tz='UTC')
+    
+    # Filter for sessions that have already reached their closing time
+    past_sessions = schedule[schedule['market_close'] <= now_utc]
+    
+    if not past_sessions.empty:
+        # Get the date of the very last entry in the index
+        # .date() extracts the datetime.date object from the pandas Timestamp
+        last_date = past_sessions.index[-1].date()
+        return last_date
+    else:
+        return None  # Returning None is more standard for object types than a string
 
 
 if __name__ == "__main__":
@@ -1044,7 +1075,12 @@ if __name__ == "__main__":
         
         # Populate calculation table
         print(f"\nPopulating calculation table for {ticker}...")
+        latest = get_last_nyse_open_date()
         dates = copy_dates()
+
+        dates.append(latest)
+        print(dates)
+
         print("Fetching beta values...")
         beta = get_betas_for_dates(ticker, dates)
         

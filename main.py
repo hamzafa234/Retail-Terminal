@@ -15,12 +15,82 @@ from scipy.stats import norm
 from scipy.optimize import fsolve
 import plotext as plt
 
+from sec_api import QueryApi, ExtractorApi
+import ollama
+
+# Initialize APIs with your key
+API_KEY = ""
+query_api = QueryApi(api_key=API_KEY)
+extractor_api = ExtractorApi(api_key=API_KEY)
+
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
 DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
+
+def readfile(ticker: str, year: str):
+    client = ollama.Client()
+    model = "gemma3:4b"
+
+    file_path = f"{ticker}_{year}_Item8.txt"
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            file_content = f.read()
+
+        # 2. Construct a prompt that includes the file data
+        prompt = f"Here is the content of a file:\n\n{file_content}\n\nBased on this file, tell me about all the different types of debt that the company has. You should tell me about the amount that the company owes, the interest rate, and the type of debt. Return you answer in the form of a list that contains dictionaries in python."
+
+        # 3. Send to Ollama
+        response = client.generate(model=model, prompt=prompt)
+        print(response.response)
+
+    except FileNotFoundError:
+        print(f"Error: The file '{file_path}' was not found.")
+          
+
+def download_item_8(ticker: str, year: str):
+
+    # 2. Query to find the 10-K filing URL for that year
+    # We search for formType "10-K" and the specific year range
+    query = {
+      "query": f"ticker:{ticker} AND formType:\"10-K\" AND filedAt:[{year}-01-01 TO {year}-12-31]",
+      "from": "0",
+      "size": "1",
+      "sort": [{"filedAt": {"order": "desc"}}]
+    }
+
+    try:
+        response = query_api.get_filings(query)
+        filings = response.get('filings', [])
+
+        if not filings:
+            print(f"No 10-K filing found for {ticker} in {year}.")
+            return
+
+        # Get the URL of the main HTML filing
+        filing_url = filings[0]['linkToFilingDetails']
+        print(f"Filing found: {filing_url}")
+
+        # 3. Extract Item 8
+        # "8" is the identifier for Financial Statements
+        # "text" returns cleaned text; use "html" if you want the original tables
+        print(f"Extracting Item 8 for {ticker}...")
+        item_8_content = extractor_api.get_section(filing_url, "8", "text")
+
+        # 4. Save to file
+        filename = f"{ticker}_{year}_Item8.txt"
+        with open(filename, "w", encoding="utf-8") as f:
+            f.write(item_8_content)
+        
+        print(f"Successfully downloaded Item 8 to {filename}")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
 
 def get_closing_prices_list(ticker_symbol: str, target_dates: list):
     if not target_dates:
@@ -1019,6 +1089,13 @@ def get_last_nyse_open_date():
     else:
         return None  # Returning None is more standard for object types than a string
 
+def rm(ticker: str, year: str):
+    file_path = f"{ticker}_{year}_Item8.txt"
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    else:
+        print("The file does not exist") 
+
 
 if __name__ == "__main__":
     print("Financial Data Manager")
@@ -1116,6 +1193,9 @@ if __name__ == "__main__":
         std = calc_dd()
         percent = get_probabilities(std)
         insert_into_db(percent, "dtd_value")
+        download_item_8(ticker, 2024)
+        readfile(ticker, 2024)
+        rm(ticker, 2024)
         print(f"✓ Calculation table for {ticker} populated successfully!\n")
         print(f"All data for {ticker} has been processed!\n")
         date_strings = [d.strftime('%Y-%m-%d') for d in dates]

@@ -13,6 +13,7 @@ import pandas_market_calendars as mcal
 
 from scipy.stats import norm
 from scipy.optimize import fsolve
+import plotext as plt
 
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
@@ -450,7 +451,6 @@ def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
         )
         
         conn.commit()
-        print(f"Successfully inserted {len(list_of_tuples)} sample entries into {type}_statement.")
         
     except psycopg2.Error as e:
         print(f"Database Error: {e}")
@@ -562,7 +562,6 @@ UPDATE income_statement SET id = -id;
         dates_list = [row[0] for row in results]
         
         conn.commit()
-        print(f"Successfully processed dates. Retrieved {len(dates_list)} records.")
     except Exception as e:
         print(f"Error: {e}")
         conn.rollback() 
@@ -638,7 +637,6 @@ def copy_cap():
         """
         cur.execute(update_query)
         conn.commit()
-        print(f"Market cap calculated and updated for {cur.rowcount} rows.")
         
         # 3. Execute the SELECT query to retrieve distinct market caps
         query = "SELECT DISTINCT market_cap FROM calc;"
@@ -650,7 +648,6 @@ def copy_cap():
         
         # Flatten the list of tuples into a simple list
         dates_list = [row[0] for row in results]
-        print(f"Successfully retrieved {len(dates_list)} distinct market cap values.")
         
     except Exception as e:
         print(f"Error while processing: {e}")
@@ -698,7 +695,6 @@ def calc_dd():
         updated_data = cur.fetchall()
         
         conn.commit()
-        print(f"Successfully updated and retrieved {len(updated_data)} rows.")
 
     except Exception as e:
         if conn:
@@ -748,12 +744,10 @@ def sync_calc_dates():
         conn.commit()
         
         count = cur.rowcount
-        print(f"Successfully updated {count} rows in the calc table.")
 
     except Exception as e:
         if conn:
             conn.rollback()
-        print(f"Error while updating dates: {e}")
     finally:
         # 4. Clean up
         if cur:
@@ -783,7 +777,6 @@ def find_default_point():
         """
         
         cur.execute(query1)
-        print(f"Successfully updated {cur.rowcount} rows in first query.")
         
         # Second query: Copy default_point from row id 2 to row id 1
         query2 = """
@@ -797,7 +790,6 @@ def find_default_point():
         """
         
         cur.execute(query2)
-        print(f"Successfully copied default_point from row 2 to row 1.")
         
         # Third query: Select all default_points from calc table
         query3 = """
@@ -811,7 +803,6 @@ def find_default_point():
         # Fetch all the default_point values
         results = [row[0] for row in cur.fetchall()]
         
-        print(f"Retrieved {len(results)} default_point values.")
         
         conn.commit()
     except Exception as e:
@@ -988,7 +979,6 @@ def get_treasury_yield_list_fast(target_dates: list):
     history = ticker.history(start=start_date, end=end_date)
 
     if history.empty:
-        print("Warning: No data found for the given range.")
         return [None] * len(target_dates)
 
     # 3. Align timezones
@@ -1115,10 +1105,6 @@ if __name__ == "__main__":
         cap = []
         cap = copy_cap()
         cap = list(map(float, cap))
-        print(len(default_points))
-        print(len(vol))
-        print(len(cap))
-        print(len(yields))
         mer = []
         mer = solve_merton(cap, vol, default_points, yields, 1)
         one = mer[0]
@@ -1128,9 +1114,13 @@ if __name__ == "__main__":
         insert_into_db(one, 'market_val_assets')
         insert_into_db(two, 'asset_vol')
         std = calc_dd()
-        print(std)
         percent = get_probabilities(std)
-        print(percent)
         insert_into_db(percent, "dtd_value")
         print(f"✓ Calculation table for {ticker} populated successfully!\n")
         print(f"All data for {ticker} has been processed!\n")
+        date_strings = [d.strftime('%Y-%m-%d') for d in dates]
+        plt.date_form('Y-m-d') # Tell plotext how to read your dates
+        plt.plot(date_strings, percent)
+        plt.show()
+
+        break

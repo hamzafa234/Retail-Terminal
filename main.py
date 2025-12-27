@@ -15,12 +15,95 @@ from scipy.stats import norm
 from scipy.optimize import fsolve
 import plotext as plt
 
+from sec_api import QueryApi, ExtractorApi
+import ollama
+import os
+import re
+import ast
+
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = "517186"
+DB_PASSWORD = ""
 DB_HOST = "localhost"
 DB_PORT = "5432"
+
+# Initialize APIs with your key
+API_KEY = "key"
+query_api = QueryApi(api_key=API_KEY)
+extractor_api = ExtractorApi(api_key=API_KEY)
+
+def readfile(file_path: str):
+    client = ollama.Client()
+    model = "deepseek-v3.1:671b-cloud"
+
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            file_content = f.read()
+
+        # 2. Construct a prompt that includes the file data
+        prompt = f"Here is the content of a file:\n\n{file_content}\n\nBased on this file, tell me about all the different types of debt that the company has. Return you answer in the form of a list that contains dictionaries in python. The dictionaries should only have the following keys: Type of instrument, maturity date, interest rate, and amount outstanding. Only return the list of dictionaries and nothing else or code will break"
+
+        # 3. Send to Ollama
+        response = client.generate(model=model, prompt=prompt)
+        print(response.response)
+
+    except FileNotFoundError:
+        print(f"Error: The file '{file_path}' was not found.")
+
+def download_ten(ticker: str, year: str):
+    # 2. Query to find the 10-K filing URL
+    query = {
+      "query": f"ticker:{ticker} AND formType:\"10-K\" AND filedAt:[{year}-01-01 TO {year}-12-31]",
+      "from": "0",
+      "size": "1",
+      "sort": [{"filedAt": {"order": "desc"}}]
+    }
+
+    try:
+        response = query_api.get_filings(query)
+        filings = response.get('filings', [])
+
+        if not filings:
+            print(f"No 10-K filing found for {ticker} in {year}.")
+            return
+
+        filing_url = filings[0]['linkToFilingDetails']
+        print(f"Filing found: {filing_url}")
+
+        # 3. Target specific Items to get full Part content
+        # In SEC filings, Part II starts at Item 5, Part III at Item 10, Part IV at Item 15.
+        # Requesting by 'part' instead of 'item' often results in truncated data.
+        sections_to_get = ["7", "8", "15"]
+        combined_content = []
+
+        print(f"Extracting full items for {ticker} (Parts II, III, and IV)...")
+        
+        for section in sections_to_get:
+            try:
+                # Use 'text' return type and ensure we aren't using a 'snippet' parameter
+                content = extractor_api.get_section(filing_url, section, "text")
+                
+                if content and len(content.strip()) > 100: # Ensure it's not just a header
+                    header = f"\n\n--- START OF ITEM {section} ---\n\n"
+                    combined_content.append(header + content)
+                    print(f"Successfully extracted Item {section}")
+            except Exception as section_error:
+                print(f"Could not extract Item {section}: {section_error}")
+
+        # 4. Save to file
+        if combined_content:
+            filename = f"{ticker}_{year}_.txt"
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write("".join(combined_content))
+            print(f"Successfully saved content to {filename}")
+        else:
+            print("No content was extracted. Check if the API key has 'Extractor' permissions.")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+
+
 
 def get_closing_prices_list(ticker_symbol: str, target_dates: list):
     if not target_dates:
@@ -1122,5 +1205,6 @@ if __name__ == "__main__":
         plt.date_form('Y-m-d') # Tell plotext how to read your dates
         plt.plot(date_strings, percent)
         plt.show()
-
+        download_ten(ticker, 2025)
+        readfile(f"{ticker}_{2025}_txt")
         break

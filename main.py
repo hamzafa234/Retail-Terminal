@@ -42,14 +42,52 @@ def readfile(file_path: str):
             file_content = f.read()
 
         # 2. Construct a prompt that includes the file data
-        prompt = f"Here is the content of a file:\n\n{file_content}\n\nBased on this file, tell me about all the different types of debt that the company has. Return you answer in the form of a list that contains dictionaries in python. The dictionaries should only have the following keys: Type of instrument, maturity date, interest rate, and amount outstanding. Only return the list of dictionaries and nothing else or code will break"
+        prompt = f"Here is the content of a file:\n\n{file_content}\n\nBased on this file, tell me about all the different types of debt that the company has. Return you answer in the form of a list that contains dictionaries in python. The dictionaries should only have the following keys: Type of instrument, maturity date, interest rate, and amount outstanding. Only return the list of dictionaries and nothing else or code will break. Don't name the list either."
 
         # 3. Send to Ollama
         response = client.generate(model=model, prompt=prompt)
-        print(response.response)
+
+        insert_debt_info(response)        
 
     except FileNotFoundError:
         print(f"Error: The file '{file_path}' was not found.")
+
+def insert_debt_info(data_list):
+    try:
+        # 1. Connect to your database
+        conn = psycopg2.connect(
+            dbname=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            host=DB_HOST,
+            port=DB_PORT
+        )
+        cur = conn.cursor()
+
+        # 2. Get columns from the first dictionary
+        columns = data_list[0].keys()
+        query = "INSERT INTO debt_info ({}) VALUES ({})".format(
+            ', '.join(columns),
+            ', '.join(['%s'] * len(columns))
+        )
+
+        # 3. Extract values for each row
+        values = [tuple(row.values()) for row in data_list]
+
+        # 4. Execute batch insert for efficiency
+        extras.execute_values(cur, "INSERT INTO debt_info (" + ",".join(columns) + ") VALUES %s", values)
+
+        conn.commit()
+        print(f"Successfully inserted {len(data_list)} rows.")
+
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        if conn:
+            conn.rollback()
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
 
 def download_ten(ticker: str, year: str):
     # 2. Query to find the 10-K filing URL
@@ -559,7 +597,7 @@ def cleardatabase():
     )
     cursor = conn.cursor()
 
-    tables = ['calc', 'income_statement', 'cashflow_statement', 'balance_sheet']
+    tables = ['calc', 'income_statement', 'cashflow_statement', 'balance_sheet', 'debt_info']
 
     for table in tables:
         cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE;")
@@ -1205,6 +1243,6 @@ if __name__ == "__main__":
         plt.date_form('Y-m-d') # Tell plotext how to read your dates
         plt.plot(date_strings, percent)
         plt.show()
-        download_ten(ticker, 2025)
-        readfile(f"{ticker}_{2025}_txt")
+        download_ten(ticker, "2025")
+        readfile(f"{ticker}_2025_.txt")
         break

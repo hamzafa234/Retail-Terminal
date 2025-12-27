@@ -28,7 +28,6 @@ CREATE TABLE debt_info (
     principal BIGINT,
     rate DECIMAL(10, 4),
     debt_security_type VARCHAR(255),
-    total_debt BIGINT
 );
 -- income statement table
 create table income_statement (

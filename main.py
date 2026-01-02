@@ -252,7 +252,7 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
                 "net_income": ["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"],
                 "eps": ["EarningsPerShareBasic"],
                 "diluted_eps": ["EarningsPerShareDiluted"],
-                "shares_outstanding": ["WeightedAverageNumberOfSharesOutstandingBasic"],
+                "shares_outstanding": ["WeightedAverageNumberOfSharesOutstandingBasic", "CommonStockSharesOutstanding"],
                 "diluted_shares_outstanding": ["WeightedAverageNumberOfDilutedSharesOutstanding"]
             },
             "balance": {
@@ -325,10 +325,9 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
             return []
 
         quarters_dict = {}
-
-        # 3. Dynamic Data Extraction
         current_map = tag_map.get(statement_type.lower(), {})
         
+        # First pass: collect all data points that exist
         for field_name, tags in current_map.items():
             data_points = get_values_from_fallbacks(tags)
             for entry in data_points:
@@ -339,9 +338,53 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
                     }
                 quarters_dict[end_date][field_name] = entry['val']
 
+        # Second pass: ensure all fields exist in all quarters with None as default
+        for quarter_data in quarters_dict.values():
+            for field_name in current_map.keys():
+                if field_name not in quarter_data:
+                    quarter_data[field_name] = None
+        
+        # Third pass: Handle missing shares_outstanding with broader tag search
+        if 'shares_outstanding' in current_map:
+            # Find all quarters with None for shares_outstanding
+            missing_dates = [q['statement_date'].strftime('%Y-%m-%d') 
+                           for q in quarters_dict.values() 
+                           if q.get('shares_outstanding') is None]
+            
+            if missing_dates:
+                # Search for any tag containing 'shares' and 'outstanding'
+                shares_tags = [tag for tag in facts.keys() 
+                             if 'shares' in tag.lower() and 'outstanding' in tag.lower()]
+                
+                # Try each tag to fill missing dates
+                for tag in shares_tags:
+                    units = facts[tag].get('units', {})
+                    for unit_key in ['shares']:
+                        if unit_key in units:
+                            data_points = [v for v in units[unit_key] 
+                                         if v.get('form') in ['10-Q', '10-K']]
+                            
+                            for entry in data_points:
+                                end_date = entry['end']
+                                # Only update if this date exists and shares_outstanding is None
+                                if end_date in quarters_dict and quarters_dict[end_date].get('shares_outstanding') is None:
+                                    quarters_dict[end_date]['shares_outstanding'] = entry['val']
+                                    print(f"Filled shares_outstanding for {end_date} using {tag}")
+                    
+                    # Check if we've filled all missing dates
+                    if all(quarters_dict[date].get('shares_outstanding') is not None 
+                          for date in missing_dates if date in quarters_dict):
+                        break
+
         # Sort and Filter by Year
         result = sorted(quarters_dict.values(), key=lambda x: x['statement_date'], reverse=True)
         cutoff = datetime.now().year - years
+
+        # Add after fetching facts
+        for tag in facts.keys():
+            if 'share' in tag.lower() or 'outstanding' in tag.lower():
+                print(f"  - {tag}: {list(facts[tag].get('units', {}).keys())}")
+
         return [q for q in result if q['statement_date'].year >= cutoff]
 
     except Exception as e:

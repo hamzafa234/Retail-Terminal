@@ -24,7 +24,7 @@ import ast
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = ""
+DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -376,6 +376,38 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
                           for date in missing_dates if date in quarters_dict):
                         break
 
+        # Fourth pass: Handle missing long_term_debt with broader tag search
+        if 'long_term_debt' in current_map:
+            # Find all quarters with None for long_term_debt
+            missing_dates = [q['statement_date'].strftime('%Y-%m-%d') 
+                           for q in quarters_dict.values() 
+                           if q.get('long_term_debt') is None]
+            
+            if missing_dates:
+                # Search for any tag containing 'debt' and 'long'
+                debt_tags = [tag for tag in facts.keys() 
+                           if 'debt' in tag.lower() and 'long' in tag.lower()]
+                
+                # Try each tag to fill missing dates
+                for tag in debt_tags:
+                    units = facts[tag].get('units', {})
+                    for unit_key in ['USD']:
+                        if unit_key in units:
+                            data_points = [v for v in units[unit_key] 
+                                         if v.get('form') in ['10-Q', '10-K']]
+                            
+                            for entry in data_points:
+                                end_date = entry['end']
+                                # Only update if this date exists and long_term_debt is None
+                                if end_date in quarters_dict and quarters_dict[end_date].get('long_term_debt') is None:
+                                    quarters_dict[end_date]['long_term_debt'] = entry['val']
+                                    print(f"Filled long_term_debt for {end_date} using {tag}")
+                    
+                    # Check if we've filled all missing dates
+                    if all(quarters_dict[date].get('long_term_debt') is not None 
+                          for date in missing_dates if date in quarters_dict):
+                        break
+
         # Sort and Filter by Year
         result = sorted(quarters_dict.values(), key=lambda x: x['statement_date'], reverse=True)
         cutoff = datetime.now().year - years
@@ -390,7 +422,6 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
     except Exception as e:
         print(f"Error: {e}")
         return None
-
 
 
 def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
@@ -690,7 +721,8 @@ def calc_dd():
     finally:
         if cur: cur.close()
         if conn: conn.close()
-   
+  
+    print(nums)
     nums = [item[0] for item in updated_data]
     float_list = list(map(float, nums))
     return float_list 

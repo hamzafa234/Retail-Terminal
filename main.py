@@ -24,7 +24,7 @@ import ast
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = "517186"
+DB_PASSWORD = ""
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -998,7 +998,6 @@ if __name__ == "__main__":
         
         print("Fetching income statement data...")
         all_income_data = get_comp_fin(ticker, "income", years=years)
-        print(all_income_data)
         insert_multiple_statements(all_income_data, "income")
         
         print("Fetching cash flow statement data...")

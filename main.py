@@ -24,7 +24,7 @@ import ast
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = ""
+DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -227,304 +227,127 @@ def calculate_equity_volatility(price_history):
     
     return x
 
-def get_comp_fin(ticker: str, type: str, years: int = 5) -> Optional[List[Dict]]:
-    """
-    Fetch quarterly financial data for a company from SEC EDGAR API.
-    
-    Args:
-        ticker: Company stock ticker symbol (e.g., 'AAPL', 'MSFT')
-        type: The type of financial statement to fetch ('income', 'cashflow', 'balance')
-        years: Number of years of historical data to fetch (default: 5)
-    
-    Returns:
-        List of dictionaries with quarterly financial statement data, sorted by date (most recent first)
-    """
-    
+
+def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[List[Dict]]:
     base_url = "https://data.sec.gov/api/xbrl/companyfacts"
     ticker = ticker.upper().strip()
-    
-    # User agent is required by SEC API
-    headers = {
-        'User-Agent': 'Hamza_Fahad hamzafa234@gmail.com'  # Replace with your info
+    headers = {'User-Agent': 'Hamza_Fahad hamzafa234@gmail.com'}
+
+    # 1. Define Tag Fallbacks (The "Mapping")
+    # This ensures if 'CostOfRevenue' is missing, we check other common SEC tags.
+    tag_map = {
+            "income": {
+                "revenue": ["Revenue", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "SalesRevenueGoodsNet", "TotalRevenuesAndOtherIncome", "OperatingRevenue"],
+                "cost_of_revenue": ["CostOfRevenue", "CostOfGoodsAndServicesSold", "CostOfGoodsSold", "CostOfServices", "CostOfSales"],
+                "gross_profit": ["GrossProfit", "BenefitsLossesAndExpenses"],
+                "operating_expenses": ["OperatingExpenses", "OperatingCostsAndExpenses"],
+                "research_development": ["ResearchAndDevelopmentExpense", "ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost"],
+                "selling_general_administrative": ["SellingGeneralAndAdministrativeExpense", "SellingAndMarketingExpense", "GeneralAndAdministrativeExpense"],
+                "operating_income": ["OperatingIncomeLoss", "IncomeLossFromOperatingActivities"],
+                "interest_expense": ["InterestExpense", "InterestExpenseNet", "InterestAndDebtExpense"],
+                "interest_income": ["InterestIncomeOther", "InterestIncome", "InterestAndDividendIncomeOperating", "InvestmentIncomeNet"],
+                "other_income_expense": ["OtherNonoperatingIncomeExpense", "NonoperatingIncomeExpense"],
+                "income_before_tax": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
+                "income_tax_expense": ["IncomeTaxExpenseBenefit", "IncomeTaxExpenseBenefitContinuingOperations"],
+                "net_income": ["NetIncomeLoss", "NetIncomeLossAvailableToCommonStockholdersBasic", "ProfitLoss"],
+                "eps": ["EarningsPerShareBasic"],
+                "diluted_eps": ["EarningsPerShareDiluted"],
+                "shares_outstanding": ["WeightedAverageNumberOfSharesOutstandingBasic"],
+                "diluted_shares_outstanding": ["WeightedAverageNumberOfDilutedSharesOutstanding"]
+            },
+            "balance": {
+                "total_assets": ["Assets"],
+                "cash_and_equivalents": ["CashAndCashEquivalentsAtCarryingValue", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"],
+                "short_term_investments": ["ShortTermInvestments", "MarketableSecuritiesCurrent"],
+                "accounts_receivable": ["AccountsReceivableNetCurrent", "AccountsReceivableNet"],
+                "inventory": ["InventoryNet", "InventoryGross"],
+                "total_current_assets": ["AssetsCurrent"],
+                "property_plant_equipment": ["PropertyPlantAndEquipmentNet"],
+                "goodwill": ["Goodwill"],
+                "intangible_assets": ["IntangibleAssetsNetExcludingGoodwill"],
+                "total_liabilities": ["Liabilities"],
+                "accounts_payable": ["AccountsPayableCurrent", "AccountsPayable"],
+                "total_current_liabilities": ["LiabilitiesCurrent"],
+                "long_term_debt": ["LongTermDebtNoncurrent", "LongTermDebtAndCapitalLeaseObligations"],
+                "total_equity": ["StockholdersEquity", "StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest"],
+                "retained_earnings": ["RetainedEarningsAccumulatedDeficit"]
+            },
+            "cashflow": {
+                "net_income": ["NetIncomeLoss"],
+                "depreciation_amortization": ["DepreciationDepletionAndAmortization", "DepreciationAndAmortization"],
+                "stock_based_compensation": ["ShareBasedCompensation"],
+                "deferred_income_tax": ["DeferredIncomeTaxExpenseBenefit"],
+                "change_working_capital": ["IncreaseDecreaseInOperatingCapital"],
+                "change_accounts_receivable": ["IncreaseDecreaseInAccountsReceivable"],
+                "change_inventory": ["IncreaseDecreaseInInventories"],
+                "change_accounts_payable": ["IncreaseDecreaseInAccountsPayable"],
+                "operating_cash_flow": ["NetCashProvidedByUsedInOperatingActivities"],
+                "capital_expenditures": ["PaymentsToAcquirePropertyPlantAndEquipment"],
+                "acquisitions": ["PaymentsToAcquireBusinessesNetOfCashAcquired"],
+                "investments": ["PaymentsToAcquireInvestments", "PurchaseOfInvestments"],
+                "other_investing_activities": ["NetCashProvidedByUsedInInvestingActivitiesContinuingOperations"],
+                "investing_cash_flow": ["NetCashProvidedByUsedInInvestingActivities"],
+                "debt_repayment": ["RepaymentsOfLongTermDebt"],
+                "stock_issued": ["ProceedsFromIssuanceOfCommonStock"],
+                "stock_repurchased": ["PaymentsForRepurchaseOfCommonStock"],
+                "dividends_paid": ["PaymentsOfDividends", "PaymentsOfDividendsCommonStock"],
+                "other_financing_activities": ["NetCashProvidedByUsedInFinancingActivitiesContinuingOperations"],
+                "financing_cash_flow": ["NetCashProvidedByUsedInFinancingActivities"],
+                "net_change_cash": ["CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalentsPeriodIncreaseDecreaseIncludingExchangeRateEffect"],
+                "free_cash_flow": [] 
+            }
     }
-    
-    # Validate the 'type' argument
-    if type.lower() not in ["income", "cashflow", "balance"]:
-        print(f"Invalid statement type: {type}. Must be 'income', 'cashflow', or 'balance'.")
-        return None
-    
+
     try:
-        # Get the CIK from the ticker
+        # Fetch CIK (Ideally, cache this locally to be more efficient)
         tickers_url = "https://www.sec.gov/files/company_tickers.json"
-        response = requests.get(tickers_url, headers=headers)
-        response.raise_for_status()
+        resp = requests.get(tickers_url, headers=headers)
+        resp.raise_for_status()
+        cik = next((str(v['cik_str']).zfill(10) for v in resp.json().values() if v['ticker'] == ticker), None)
         
-        tickers_data = response.json()
-        cik = None
-        
-        # Find CIK for the given ticker
-        for entry in tickers_data.values():
-            if entry['ticker'].upper() == ticker:
-                cik = str(entry['cik_str']).zfill(10)
-                break
-        
-        if not cik:
-            print(f"Could not find CIK for ticker: {ticker}")
-            return None
-        
-        # Fetch company facts
+        if not cik: return None
+
+        # Fetch Company Facts
         facts_url = f"{base_url}/CIK{cik}.json"
         response = requests.get(facts_url, headers=headers)
         response.raise_for_status()
-        
-        data = response.json()
-        
-        # Extract financial data from GAAP facts
-        facts = data.get('facts', {}).get('us-gaap', {})
-        
-        # Helper function to get all quarterly values for a concept
-        def get_quarterly_values(concept_name):
-            if concept_name not in facts:
-                return []
-            
-            units = facts[concept_name].get('units', {})
-            
-            for unit_type in ['USD', 'shares', 'USD/shares']:
-                if unit_type in units:
-                    values = units[unit_type]
-                    quarterly_values = [v for v in values if v.get('form') in ['10-Q', '10-K'] and v.get('fp') in ['Q1', 'Q2', 'Q3', 'Q4', 'FY']]
-                        
-                    return quarterly_values
+        facts = response.json().get('facts', {}).get('us-gaap', {})
+
+        # 2. Improved Helper: Handles a list of possible tags
+        def get_values_from_fallbacks(tag_list):
+            for tag in tag_list:
+                if tag in facts:
+                    units = facts[tag].get('units', {})
+                    for unit_key in ['USD', 'shares', 'USD/shares']:
+                        if unit_key in units:
+                            # Filter for primary filings (10-Q/10-K)
+                            return [v for v in units[unit_key] if v.get('form') in ['10-Q', '10-K']]
             return []
-        
-        
-        if type == "income":
-            revenue_values = get_quarterly_values('Revenue') or get_quarterly_values('RevenueFromContractWithCustomerExcludingAssessedTax')
-            cost_values = get_quarterly_values('CostOfRevenue')
-            gross_profit_values = get_quarterly_values('GrossProfit')
-            operating_expenses_values = get_quarterly_values('OperatingExpenses')
-            rd_values = get_quarterly_values('ResearchAndDevelopmentExpense')
-            sga_values = get_quarterly_values('SellingGeneralAndAdministrativeExpense')
-            operating_income_values = get_quarterly_values('OperatingIncomeLoss')
-            interest_expense_values = get_quarterly_values('InterestExpense')
-            interest_income_values = get_quarterly_values('InterestIncomeOther') or get_quarterly_values('InterestIncome')
-            other_income_values = get_quarterly_values('OtherNonoperatingIncomeExpense')
-            income_before_tax_values = get_quarterly_values('IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest')
-            tax_values = get_quarterly_values('IncomeTaxExpenseBenefit')
-            net_income_values = get_quarterly_values('NetIncomeLoss')
-            eps_values = get_quarterly_values('EarningsPerShareBasic')
-            diluted_eps_values = get_quarterly_values('EarningsPerShareDiluted')
-            shares_values = get_quarterly_values('WeightedAverageNumberOfSharesOutstandingBasic')
-            diluted_shares_values = get_quarterly_values('WeightedAverageNumberOfDilutedSharesOutstanding')
-            
-        
-        elif type == "cashflow":
-            net_income_values = get_quarterly_values('NetIncomeLoss')
-            depreciation_values = get_quarterly_values('DepreciationAndAmortization')
-            stock_comp_values = get_quarterly_values('ShareBasedCompensationExpense')
-            deferred_tax_values = get_quarterly_values('DeferredIncomeTaxExpenseBenefit')
-            change_wc_values = get_quarterly_values('ChangeInWorkingCapital')
-            change_ar_values = get_quarterly_values('ChangeInAccountsReceivable')
-            change_inv_values = get_quarterly_values('ChangeInInventory')
-            change_ap_values = get_quarterly_values('ChangeInAccountsPayable')
-            op_cash_flow_values = get_quarterly_values('NetCashProvidedByUsedInOperatingActivities')
-            capex_values = get_quarterly_values('PaymentsToAcquirePropertyPlantAndEquipment') # Usually negative
-            acquisitions_values = get_quarterly_values('PaymentsToAcquireBusinessesNetOfCashAcquired') # Usually negative
-            investments_values = get_quarterly_values('PaymentsToAcquireInvestments') or get_quarterly_values('PurchasesOfInvestments') # Usually negative
-            other_investing_values = get_quarterly_values('OtherInvestingActivities')
-            investing_cash_flow_values = get_quarterly_values('NetCashProvidedByUsedInInvestingActivities')
-            debt_issued_values = get_quarterly_values('ProceedsFromIssuanceOfLongTermDebt')
-            debt_repayment_values = get_quarterly_values('RepaymentsOfLongTermDebt') # Usually negative
-            stock_issued_values = get_quarterly_values('ProceedsFromIssuanceOfCommonStock')
-            stock_repurchased_values = get_quarterly_values('PaymentsForRepurchaseOfCommonStock') # Usually negative
-            dividends_values = get_quarterly_values('PaymentsOfDividends') # Usually negative
-            other_financing_values = get_quarterly_values('OtherFinancingActivities')
-            financing_cash_flow_values = get_quarterly_values('NetCashProvidedByUsedInFinancingActivities')
-            net_change_cash_values = get_quarterly_values('CashAndCashEquivalentsPeriodIncreaseDecrease')
-            
-        
-        elif type == "balance":
-            cash_values = get_quarterly_values('CashAndCashEquivalentsAtCarryingValue')
-            short_term_investments_values = get_quarterly_values('MarketableSecuritiesCurrent')
-            accounts_receivable_values = get_quarterly_values('AccountsReceivableNetCurrent')
-            inventory_values = get_quarterly_values('InventoryNet')
-            other_current_assets_values = get_quarterly_values('OtherAssetsCurrent')
-            total_current_assets_values = get_quarterly_values('AssetsCurrent')
-            ppe_values = get_quarterly_values('PropertyPlantAndEquipmentNet')
-            accumulated_depreciation_values = get_quarterly_values('AccumulatedDepreciationDepletionAndAmortizationPropertyPlantAndEquipment') # Note: this might be negative in some filings
-            intangible_assets_values = get_quarterly_values('IntangibleAssetsNetExcludingGoodwill')
-            goodwill_values = get_quarterly_values('Goodwill')
-            long_term_investments_values = get_quarterly_values('MarketableSecuritiesNoncurrent')
-            other_long_term_assets_values = get_quarterly_values('OtherAssetsNoncurrent')
-            total_assets_values = get_quarterly_values('Assets')
-            
-            accounts_payable_values = get_quarterly_values('AccountsPayableCurrent')
-            short_term_debt_values = get_quarterly_values('DebtCurrent') or get_quarterly_values('ShortTermBorrowings')
-            accrued_liabilities_values = get_quarterly_values('AccruedLiabilitiesCurrent')
-            deferred_revenue_values = get_quarterly_values('DeferredRevenueCurrent')
-            other_current_liabilities_values = get_quarterly_values('OtherLiabilitiesCurrent')
-            total_current_liabilities_values = get_quarterly_values('LiabilitiesCurrent')
-            long_term_debt_values = get_quarterly_values('LongTermDebtNoncurrent')
-            deferred_tax_liabilities_values = get_quarterly_values('DeferredTaxLiabilityNoncurrent')
-            other_long_term_liabilities_values = get_quarterly_values('OtherLiabilitiesNoncurrent')
-            total_liabilities_values = get_quarterly_values('Liabilities')
-            
-            common_stock_values = get_quarterly_values('CommonStockValue')
-            retained_earnings_values = get_quarterly_values('RetainedEarningsAccumulatedDeficit')
-            treasury_stock_values = get_quarterly_values('TreasuryStockValue') # Note: this is typically negative
-            aoci_values = get_quarterly_values('AccumulatedOtherComprehensiveIncomeLoss') # Note: this can be negative
-            total_equity_values = get_quarterly_values('StockholdersEquity')
-            total_liabilities_and_equity_values = get_quarterly_values('LiabilitiesAndStockholdersEquity')
 
-        
         quarters_dict = {}
-        
-        def add_to_quarters(values_list, field_name):
-            for item in values_list:
-                end_date_str = item['end']
-                
-                if end_date_str not in quarters_dict:
-                    quarters_dict[end_date_str] = {'statement_date': datetime.strptime(end_date_str, '%Y-%m-%d').date()}
-                quarters_dict[end_date_str][field_name] = item['val']
 
+        # 3. Dynamic Data Extraction
+        current_map = tag_map.get(statement_type.lower(), {})
         
-        if type == "income":
-            add_to_quarters(revenue_values, 'revenue')
-            add_to_quarters(cost_values, 'cost_of_revenue')
-            add_to_quarters(gross_profit_values, 'gross_profit')
-            add_to_quarters(operating_expenses_values, 'operating_expenses')
-            add_to_quarters(rd_values, 'research_development')
-            add_to_quarters(sga_values, 'selling_general_administrative')
-            add_to_quarters(operating_income_values, 'operating_income')
-            add_to_quarters(interest_expense_values, 'interest_expense')
-            add_to_quarters(interest_income_values, 'interest_income')
-            add_to_quarters(other_income_values, 'other_income_expense')
-            add_to_quarters(income_before_tax_values, 'income_before_tax')
-            add_to_quarters(tax_values, 'income_tax_expense')
-            add_to_quarters(net_income_values, 'net_income')
-            add_to_quarters(eps_values, 'eps')
-            add_to_quarters(diluted_eps_values, 'diluted_eps')
-            add_to_quarters(shares_values, 'shares_outstanding')
-            add_to_quarters(diluted_shares_values, 'diluted_shares_outstanding')
+        for field_name, tags in current_map.items():
+            data_points = get_values_from_fallbacks(tags)
+            for entry in data_points:
+                end_date = entry['end']
+                if end_date not in quarters_dict:
+                    quarters_dict[end_date] = {
+                        'statement_date': datetime.strptime(end_date, '%Y-%m-%d').date(),
+                    }
+                quarters_dict[end_date][field_name] = entry['val']
 
-        elif type == "cashflow":
-            add_to_quarters(net_income_values, 'net_income')
-            add_to_quarters(depreciation_values, 'depreciation_amortization')
-            add_to_quarters(stock_comp_values, 'stock_based_compensation')
-            add_to_quarters(deferred_tax_values, 'deferred_income_tax')
-            add_to_quarters(change_wc_values, 'change_working_capital')
-            add_to_quarters(change_ar_values, 'change_accounts_receivable')
-            add_to_quarters(change_inv_values, 'change_inventory')
-            add_to_quarters(change_ap_values, 'change_accounts_payable')
-            add_to_quarters(op_cash_flow_values, 'operating_cash_flow')
-            add_to_quarters(capex_values, 'capital_expenditures')
-            add_to_quarters(acquisitions_values, 'acquisitions')
-            add_to_quarters(investments_values, 'investments')
-            add_to_quarters(other_investing_values, 'other_investing_activities')
-            add_to_quarters(investing_cash_flow_values, 'investing_cash_flow')
-            add_to_quarters(debt_issued_values, 'debt_issued')
-            add_to_quarters(debt_repayment_values, 'debt_repayment')
-            add_to_quarters(stock_issued_values, 'stock_issued')
-            add_to_quarters(stock_repurchased_values, 'stock_repurchased')
-            add_to_quarters(dividends_values, 'dividends_paid')
-            add_to_quarters(other_financing_values, 'other_financing_activities')
-            add_to_quarters(financing_cash_flow_values, 'financing_cash_flow')
-            add_to_quarters(net_change_cash_values, 'net_change_cash')
-            
-            for date_key in quarters_dict:
-                 quarters_dict[date_key]['free_cash_flow'] = None # Placeholder
+        # Sort and Filter by Year
+        result = sorted(quarters_dict.values(), key=lambda x: x['statement_date'], reverse=True)
+        cutoff = datetime.now().year - years
+        return [q for q in result if q['statement_date'].year >= cutoff]
 
-        elif type == "balance":
-            add_to_quarters(cash_values, 'cash_and_equivalents')
-            add_to_quarters(short_term_investments_values, 'short_term_investments')
-            add_to_quarters(accounts_receivable_values, 'accounts_receivable')
-            add_to_quarters(inventory_values, 'inventory')
-            add_to_quarters(other_current_assets_values, 'other_current_assets')
-            add_to_quarters(total_current_assets_values, 'total_current_assets')
-            add_to_quarters(ppe_values, 'property_plant_equipment')
-            add_to_quarters(accumulated_depreciation_values, 'accumulated_depreciation')
-            add_to_quarters(intangible_assets_values, 'intangible_assets')
-            add_to_quarters(goodwill_values, 'goodwill')
-            add_to_quarters(long_term_investments_values, 'long_term_investments')
-            add_to_quarters(other_long_term_assets_values, 'other_long_term_assets')
-            add_to_quarters(total_assets_values, 'total_assets')
-            add_to_quarters(accounts_payable_values, 'accounts_payable')
-            add_to_quarters(short_term_debt_values, 'short_term_debt')
-            add_to_quarters(accrued_liabilities_values, 'accrued_liabilities')
-            add_to_quarters(deferred_revenue_values, 'deferred_revenue')
-            add_to_quarters(other_current_liabilities_values, 'other_current_liabilities')
-            add_to_quarters(total_current_liabilities_values, 'total_current_liabilities')
-            add_to_quarters(long_term_debt_values, 'long_term_debt')
-            add_to_quarters(deferred_tax_liabilities_values, 'deferred_tax_liabilities')
-            add_to_quarters(other_long_term_liabilities_values, 'other_long_term_liabilities')
-            add_to_quarters(total_liabilities_values, 'total_liabilities')
-            add_to_quarters(common_stock_values, 'common_stock')
-            add_to_quarters(retained_earnings_values, 'retained_earnings')
-            add_to_quarters(treasury_stock_values, 'treasury_stock')
-            add_to_quarters(aoci_values, 'accumulated_other_comprehensive_income')
-            add_to_quarters(total_equity_values, 'total_equity')
-            add_to_quarters(total_liabilities_and_equity_values, 'total_liabilities_and_equity')
-            
-        
-        # Convert to list and sort by date (most recent first)
-        result_list = sorted(quarters_dict.values(), key=lambda x: x['statement_date'], reverse=True)
-        
-        # Filter for the last N years
-        cutoff_date = datetime.now().date().replace(year=datetime.now().year - years)
-        result_list = [q for q in result_list if q['statement_date'] >= cutoff_date]
-        
-        if type == "income":    
-            required_fields = [
-                'statement_date', 'revenue', 'cost_of_revenue', 'gross_profit', 
-                'operating_expenses', 'research_development', 'selling_general_administrative',
-                'operating_income', 'interest_expense', 'interest_income', 
-                'other_income_expense', 'income_before_tax', 'income_tax_expense',
-                'net_income', 'eps', 'diluted_eps', 'shares_outstanding', 
-                'diluted_shares_outstanding'
-            ]
-            
-        elif type == "cashflow":
-            required_fields = [
-                'statement_date', 'net_income', 'depreciation_amortization', 
-                'stock_based_compensation', 'deferred_income_tax', 'change_working_capital', 
-                'change_accounts_receivable', 'change_inventory', 'change_accounts_payable', 
-                'operating_cash_flow', 'capital_expenditures', 'acquisitions', 
-                'investments', 'other_investing_activities', 'investing_cash_flow', 
-                'debt_issued', 'debt_repayment', 'stock_issued', 'stock_repurchased', 
-                'dividends_paid', 'other_financing_activities', 'financing_cash_flow', 
-                'net_change_cash', 'free_cash_flow'
-            ]
-            
-        elif type == "balance":
-            required_fields = [
-                'statement_date', 'cash_and_equivalents', 'short_term_investments', 
-                'accounts_receivable', 'inventory', 'other_current_assets', 
-                'total_current_assets', 'property_plant_equipment', 'accumulated_depreciation', 
-                'intangible_assets', 'goodwill', 'long_term_investments', 
-                'other_long_term_assets', 'total_assets', 'accounts_payable', 
-                'short_term_debt', 'accrued_liabilities', 'deferred_revenue', 
-                'other_current_liabilities', 'total_current_liabilities', 'long_term_debt', 
-                'deferred_tax_liabilities', 'other_long_term_liabilities', 
-                'total_liabilities', 'common_stock', 'retained_earnings', 
-                'treasury_stock', 'accumulated_other_comprehensive_income', 
-                'total_equity', 'total_liabilities_and_equity'
-            ]
-
-        
-        for quarter in result_list:
-            for field in required_fields:
-                if field not in quarter:
-                    default_value = 0 if field == 'other_income_expense' else None
-                    quarter[field] = default_value
-        
-        return result_list
-        
-    except requests.exceptions.RequestException as e:
-        print(f"Error fetching data: {e}")
-        return None
     except Exception as e:
-        print(f"Error processing data: {e}")
+        print(f"Error: {e}")
         return None
+
 
 
 def insert_multiple_statements(data_list: List[Dict[str, Any]], type: str):
@@ -1175,6 +998,7 @@ if __name__ == "__main__":
         
         print("Fetching income statement data...")
         all_income_data = get_comp_fin(ticker, "income", years=years)
+        print(all_income_data)
         insert_multiple_statements(all_income_data, "income")
         
         print("Fetching cash flow statement data...")
@@ -1188,7 +1012,7 @@ if __name__ == "__main__":
         
         print(f"✓ Financial statements for {ticker} populated successfully!")
         
-        # Populate calculation table
+        #Populate calculation table
         print(f"\nPopulating calculation table for {ticker}...")
         latest = get_last_nyse_open_date()
         dates = copy_dates(latest)

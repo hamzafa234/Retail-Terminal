@@ -696,15 +696,19 @@ def calc_dd():
 
         # Added "RETURNING *" at the end of the query
         query = """
-        UPDATE calc
-        SET 
-            statement_date = src.statement_date,
-            distance_to_default = (LN(calc.market_val_assets / calc.default_point) + 
-                                  (calc.riskfreerate - 0.5 * POWER(calc.asset_vol, 2)) * 1.0) 
-                                  / (calc.asset_vol * SQRT(1.0))
-        FROM income_statement AS src
-        WHERE calc.id = src.id
-        RETURNING calc.distance_to_default;
+UPDATE calc
+SET 
+    statement_date = src.statement_date,
+    distance_to_default = CASE
+        WHEN calc.market_val_assets <= 0 OR calc.default_point <= 0 OR calc.asset_vol <= 0 THEN NULL
+        WHEN calc.market_val_assets / calc.default_point < 1e-300 THEN -700.0  -- Approximate lower bound for ln()
+        ELSE (LN(calc.market_val_assets / calc.default_point) + 
+              (calc.riskfreerate - 0.5 * POWER(calc.asset_vol, 2)) * 1.0) 
+              / (calc.asset_vol * SQRT(1.0))
+    END
+FROM income_statement AS src
+WHERE calc.id = src.id
+RETURNING calc.distance_to_default;
         """
         
         cur.execute(query)
@@ -722,7 +726,6 @@ def calc_dd():
         if cur: cur.close()
         if conn: conn.close()
   
-    print(nums)
     nums = [item[0] for item in updated_data]
     float_list = list(map(float, nums))
     return float_list 
@@ -1133,6 +1136,7 @@ if __name__ == "__main__":
         insert_into_db(one, 'market_val_assets')
         insert_into_db(two, 'asset_vol')
         std = calc_dd()
+        print(std)
         percent = get_probabilities(std)
         insert_into_db(percent, "dtd_value")
         print(f"✓ Calculation table for {ticker} populated successfully!\n")

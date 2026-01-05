@@ -24,7 +24,7 @@ import ast
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = "517186"
+DB_PASSWORD = ""
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -369,7 +369,6 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
                                 # Only update if this date exists and shares_outstanding is None
                                 if end_date in quarters_dict and quarters_dict[end_date].get('shares_outstanding') is None:
                                     quarters_dict[end_date]['shares_outstanding'] = entry['val']
-                                    print(f"Filled shares_outstanding for {end_date} using {tag}")
                     
                     # Check if we've filled all missing dates
                     if all(quarters_dict[date].get('shares_outstanding') is not None 
@@ -413,9 +412,9 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
         cutoff = datetime.now().year - years
 
         # Add after fetching facts
-        for tag in facts.keys():
-            if 'share' in tag.lower() or 'outstanding' in tag.lower():
-                print(f"  - {tag}: {list(facts[tag].get('units', {}).keys())}")
+#        for tag in facts.keys():
+#            if 'share' in tag.lower() or 'outstanding' in tag.lower():
+#                print(f"  - {tag}: {list(facts[tag].get('units', {}).keys())}")
 
         return [q for q in result if q['statement_date'].year >= cutoff]
 

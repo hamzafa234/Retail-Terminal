@@ -24,7 +24,7 @@ import ast
 # --- Database Connection Details ---
 DB_NAME = "fin_data"
 DB_USER = "hamzafahad"
-DB_PASSWORD = ""
+DB_PASSWORD = "517186"
 DB_HOST = "localhost"
 DB_PORT = "5432"
 
@@ -505,9 +505,10 @@ def cleardatabase():
 
 def copy_dates(latest: date):
     """
-    Shifts existing IDs, inserts the new date as ID 1 in income_statement,
-    copies all data from ID 2 to ID 1 (except date), syncs calc table with
-    income_statement dates and IDs, and returns all unique dates.
+    Validates that all dates exist across income_statement, balance_sheet, and cashflow_statement,
+    removes any dates that don't exist in all three tables, then shifts existing IDs, 
+    inserts the new date as ID 1 in income_statement, copies all data from ID 2 to ID 1 
+    (except date), syncs calc table with income_statement dates and IDs, and returns all unique dates.
     """
     conn = psycopg2.connect(
         user=DB_USER, password=DB_PASSWORD,
@@ -516,6 +517,53 @@ def copy_dates(latest: date):
     cur = conn.cursor()
     dates_list = []
     try:
+        # 0. Validate and sync dates across all three tables
+        sync_dates_query = """
+            -- Find dates that exist in all three tables
+            WITH common_dates AS (
+                SELECT statement_date
+                FROM income_statement
+                INTERSECT
+                SELECT statement_date
+                FROM balance_sheet
+                INTERSECT
+                SELECT statement_date
+                FROM cashflow_statement
+            )
+            -- Delete from income_statement where date is not in common_dates
+            DELETE FROM income_statement
+            WHERE statement_date NOT IN (SELECT statement_date FROM common_dates);
+            
+            -- Delete from balance_sheet where date is not in common_dates
+            WITH common_dates AS (
+                SELECT statement_date
+                FROM income_statement
+                INTERSECT
+                SELECT statement_date
+                FROM balance_sheet
+                INTERSECT
+                SELECT statement_date
+                FROM cashflow_statement
+            )
+            DELETE FROM balance_sheet
+            WHERE statement_date NOT IN (SELECT statement_date FROM common_dates);
+            
+            -- Delete from cashflow_statement where date is not in common_dates
+            WITH common_dates AS (
+                SELECT statement_date
+                FROM income_statement
+                INTERSECT
+                SELECT statement_date
+                FROM balance_sheet
+                INTERSECT
+                SELECT statement_date
+                FROM cashflow_statement
+            )
+            DELETE FROM cashflow_statement
+            WHERE statement_date NOT IN (SELECT statement_date FROM common_dates);
+        """
+        cur.execute(sync_dates_query)
+        
         # 1. Shift IDs to make room for ID 1
         shift_ids_query = """
 UPDATE income_statement SET id = -id - 1;
@@ -1067,42 +1115,31 @@ if __name__ == "__main__":
             except ValueError:
                 print("Error: Please enter a valid number")
         
-        print(f"\nProcessing {ticker} for {years} years of data...")
         
         # Populate financial statements
-        print(f"Populating financial statements for {ticker}...")
         cleardatabase()
         
-        print("Fetching income statement data...")
         all_income_data = get_comp_fin(ticker, "income", years=years)
         insert_multiple_statements(all_income_data, "income")
         
-        print("Fetching cash flow statement data...")
         all_cash_data = get_comp_fin(ticker, "cashflow", years=years)
         insert_multiple_statements(all_cash_data, "cashflow")
         
-        print("Fetching balance sheet data...")
         all_balance_data = get_comp_fin(ticker, "balance", years=years)
         insert_multiple_statements(all_balance_data, "balance")
         sync_calc_dates()
         
-        print(f"✓ Financial statements for {ticker} populated successfully!")
         
         #Populate calculation table
-        print(f"\nPopulating calculation table for {ticker}...")
         latest = get_last_nyse_open_date()
         dates = copy_dates(latest)
+        print(dates)
 
-
-        print("Fetching beta values...")
         beta = get_betas_for_dates(ticker, dates)
         
-        print("Fetching closing prices...")
         prices = get_closing_prices_list(ticker, dates)
         
-        print("Fetching treasury yields...")
         yields = get_treasury_yield_list_fast(dates)
-        print("Fetching volatility...")
         lis = []
         pri = []
         vol = []
@@ -1114,7 +1151,6 @@ if __name__ == "__main__":
             vol.append(temp)
 
         vol = list(map(float, vol))
-        print("Inserting data into calc table...")
         insert_into_db(vol, "volatility")
         insert_into_db(beta, "beta")
         insert_into_db(prices, "share_price")
@@ -1138,8 +1174,6 @@ if __name__ == "__main__":
         print(std)
         percent = get_probabilities(std)
         insert_into_db(percent, "dtd_value")
-        print(f"✓ Calculation table for {ticker} populated successfully!\n")
-        print(f"All data for {ticker} has been processed!\n")
         date_strings = [d.strftime('%Y-%m-%d') for d in dates]
         plt.date_form('Y-m-d') # Tell plotext how to read your dates
         plt.plot(date_strings, percent)

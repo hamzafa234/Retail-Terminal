@@ -343,8 +343,39 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
             for field_name in current_map.keys():
                 if field_name not in quarter_data:
                     quarter_data[field_name] = None
-        
-        # Third pass: Handle missing shares_outstanding with broader tag search
+
+        # Third pass: Handle missing total_current_liabilities with broader tag search
+        if 'total_current_liabilities' in current_map:
+            # Find all quarters with None for total_current_liabilities
+            missing_dates = [q['statement_date'].strftime('%Y-%m-%d') 
+                           for q in quarters_dict.values() 
+                           if q.get('total_current_liabilities') is None]
+            
+            if missing_dates:
+                # Search for any tag containing 'current' and 'liabilities'
+                liabilities_tags = [tag for tag in facts.keys() 
+                                  if 'current' in tag.lower() and 'liabilities' in tag.lower()]
+                
+                # Try each tag to fill missing dates
+                for tag in liabilities_tags:
+                    units = facts[tag].get('units', {})
+                    for unit_key in ['USD']:
+                        if unit_key in units:
+                            data_points = [v for v in units[unit_key] 
+                                         if v.get('form') in ['10-Q', '10-K']]
+                            
+                            for entry in data_points:
+                                end_date = entry['end']
+                                # Only update if this date exists and total_current_liabilities is None
+                                if end_date in quarters_dict and quarters_dict[end_date].get('total_current_liabilities') is None:
+                                    quarters_dict[end_date]['total_current_liabilities'] = entry['val']
+                    
+                    # Check if we've filled all missing dates
+                    if all(quarters_dict[date].get('total_current_liabilities') is not None 
+                          for date in missing_dates if date in quarters_dict):
+                        break
+
+        # Fourth pass: Handle missing shares_outstanding with broader tag search
         if 'shares_outstanding' in current_map:
             # Find all quarters with None for shares_outstanding
             missing_dates = [q['statement_date'].strftime('%Y-%m-%d') 
@@ -375,7 +406,7 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
                           for date in missing_dates if date in quarters_dict):
                         break
 
-        # Fourth pass: Handle missing long_term_debt with broader tag search
+        # Fifth pass: Handle missing long_term_debt with broader tag search
         if 'long_term_debt' in current_map:
             # Find all quarters with None for long_term_debt
             missing_dates = [q['statement_date'].strftime('%Y-%m-%d') 
@@ -413,15 +444,9 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
                         quarters_dict[date]['long_term_debt'] = 0
                         print(f"Set long_term_debt to 0 for {date} (no debt data found)")
 
-
         # Sort and Filter by Year
         result = sorted(quarters_dict.values(), key=lambda x: x['statement_date'], reverse=True)
         cutoff = datetime.now().year - years
-
-        # Add after fetching facts
-#        for tag in facts.keys():
-#            if 'share' in tag.lower() or 'outstanding' in tag.lower():
-#                print(f"  - {tag}: {list(facts[tag].get('units', {}).keys())}")
 
         return [q for q in result if q['statement_date'].year >= cutoff]
 
@@ -1097,8 +1122,6 @@ def get_last_nyse_open_date():
 
 
 if __name__ == "__main__":
-    print("Financial Data Manager")
-    print()
     while True:
         ticker = input("Enter ticker symbol (or 'exit' to quit): ").strip().upper()
         

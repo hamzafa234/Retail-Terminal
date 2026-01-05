@@ -379,13 +379,13 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
         if 'long_term_debt' in current_map:
             # Find all quarters with None for long_term_debt
             missing_dates = [q['statement_date'].strftime('%Y-%m-%d') 
-                           for q in quarters_dict.values() 
-                           if q.get('long_term_debt') is None]
+                        for q in quarters_dict.values() 
+                        if q.get('long_term_debt') is None]
             
             if missing_dates:
                 # Search for any tag containing 'debt' and 'long'
                 debt_tags = [tag for tag in facts.keys() 
-                           if 'debt' in tag.lower() and 'long' in tag.lower()]
+                        if 'debt' in tag.lower() and 'long' in tag.lower()]
                 
                 # Try each tag to fill missing dates
                 for tag in debt_tags:
@@ -393,7 +393,7 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
                     for unit_key in ['USD']:
                         if unit_key in units:
                             data_points = [v for v in units[unit_key] 
-                                         if v.get('form') in ['10-Q', '10-K']]
+                                        if v.get('form') in ['10-Q', '10-K']]
                             
                             for entry in data_points:
                                 end_date = entry['end']
@@ -404,8 +404,15 @@ def get_comp_fin(ticker: str, statement_type: str, years: int = 5) -> Optional[L
                     
                     # Check if we've filled all missing dates
                     if all(quarters_dict[date].get('long_term_debt') is not None 
-                          for date in missing_dates if date in quarters_dict):
+                        for date in missing_dates if date in quarters_dict):
                         break
+                
+                # After trying all tags, set remaining None values to 0
+                for date in missing_dates:
+                    if date in quarters_dict and quarters_dict[date].get('long_term_debt') is None:
+                        quarters_dict[date]['long_term_debt'] = 0
+                        print(f"Set long_term_debt to 0 for {date} (no debt data found)")
+
 
         # Sort and Filter by Year
         result = sorted(quarters_dict.values(), key=lambda x: x['statement_date'], reverse=True)
@@ -772,7 +779,7 @@ RETURNING calc.distance_to_default;
     finally:
         if cur: cur.close()
         if conn: conn.close()
-  
+ 
     nums = [item[0] for item in updated_data]
     float_list = list(map(float, nums))
     return float_list 

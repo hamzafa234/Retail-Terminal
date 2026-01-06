@@ -668,6 +668,34 @@ UPDATE income_statement SET id = -id;
     return dates_list
 
 
+def removeBadData():
+    '''
+    function will remove the dates from the database where data does not exist 
+    '''
+    conn = psycopg2.connect(
+        user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT, database=DB_NAME
+    )
+    cur = conn.cursor()
+    
+    try:
+        # Simple DELETE query - no function needed
+        query = """
+            DELETE FROM calc
+            WHERE default_point = 0;
+        """
+        
+        cur.execute(query)
+        deleted_count = cur.rowcount
+        
+        conn.commit()
+        print(f"Successfully deleted {deleted_count} rows with default_point = 0")
+        
+    except Exception as e:
+        print(f"Error: {e}")
+        conn.rollback()
+    finally:
+        cur.close()
+        conn.close()
 
 def insert_into_db(data_list, target_column):
     '''
@@ -1189,6 +1217,7 @@ if __name__ == "__main__":
 
 
         default_points = find_default_point()
+        removeBadData()
         cap = []
         cap = copy_cap()
         cap = list(map(float, cap))

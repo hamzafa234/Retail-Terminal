@@ -1194,7 +1194,6 @@ if __name__ == "__main__":
         print(dates)
 
         beta = get_betas_for_dates(ticker, dates)
-        
         prices = get_closing_prices_list(ticker, dates)
         
         yields = get_treasury_yield_list_fast(dates)
@@ -1214,15 +1213,13 @@ if __name__ == "__main__":
         insert_into_db(prices, "share_price")
         insert_into_db(yields, "riskfreerate")
 
-
-
         default_points = find_default_point()
-        removeBadData()
         cap = []
         cap = copy_cap()
         cap = list(map(float, cap))
         mer = []
         mer = solve_merton(cap, vol, default_points, yields, 1)
+        removeBadData()
         one = mer[0]
         two = mer[1]
         one = [int(f) for f in one]

@@ -167,6 +167,10 @@ def get_closing_prices_list(ticker_symbol: str, target_dates: list):
         'requested_date': pd.to_datetime(target_dates),
         'original_order': range(len(target_dates)) # Track original index
     })
+
+    request_df['requested_date'] = request_df['requested_date'].dt.as_unit('ns')
+    history['Date'] = history['Date'].dt.as_unit('ns')
+
     request_df = request_df.sort_values('requested_date')
 
     # 3. Use 'forward' direction to find the next available trading day

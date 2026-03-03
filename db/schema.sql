@@ -21,15 +21,6 @@ create table calc (
     dtd_value decimal(10, 4)
 );
 
-
-CREATE TABLE debt_info (
-    id SERIAL PRIMARY KEY,
-    maturity DATE NOT NULL,
-    principal BIGINT,
-    rate DECIMAL(10, 4),
-    debt_security_type VARCHAR(255),
-);
--- income statement table
 create table income_statement (
     id serial primary key,
     statement_date date not null,

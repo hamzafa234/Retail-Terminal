@@ -21,47 +21,12 @@ import re
 import ast
 
 # --- Database Connection Details ---
-DB_NAME = ""
-DB_USER = ""
+DB_NAME = "fin_data"
+DB_USER = "hamzafahad"
 DB_PASSWORD = ""
-DB_HOST = ""
-DB_PORT = ""
+DB_HOST = "localhost"
+DB_PORT = "5432"
 
-def insert_debt_info(data_list):
-    try:
-        # 1. Connect to your database
-        conn = psycopg2.connect(
-            dbname=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            host=DB_HOST,
-            port=DB_PORT
-        )
-        cur = conn.cursor()
-
-        # 2. Get columns from the first dictionary
-        columns = data_list[0].keys()
-        query = "INSERT INTO debt_info ({}) VALUES ({})".format(
-            ', '.join(columns),
-            ', '.join(['%s'] * len(columns))
-        )
-
-        # 3. Extract values for each row
-        values = [tuple(row.values()) for row in data_list]
-
-        # 4. Execute batch insert for efficiency
-        extras.execute_values(cur, "INSERT INTO debt_info (" + ",".join(columns) + ") VALUES %s", values)
-
-        conn.commit()
-        print(f"Successfully inserted {len(data_list)} rows.")
-
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        if conn:
-            conn.rollback()
-    finally:
-        if cur: cur.close()
-        if conn: conn.close()
 
 def get_closing_prices_list(ticker_symbol: str, target_dates: list):
     if not target_dates:
@@ -449,7 +414,7 @@ def cleardatabase():
     )
     cursor = conn.cursor()
 
-    tables = ['calc', 'income_statement', 'cashflow_statement', 'balance_sheet', 'debt_info']
+    tables = ['calc', 'income_statement', 'cashflow_statement', 'balance_sheet']
 
     for table in tables:
         cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE;")

@@ -43,7 +43,7 @@ def compute_default_points() -> List:
 
 
 def compute_market_caps() -> List:
-    """market_cap = share_price * shares_outstanding; returns the market cap values."""
+    """market_cap = share_price * shares_outstanding; returns caps ordered by calc.id."""
     caps: List = []
     with transaction("Error while processing") as cur:
         cur.execute("""
@@ -53,9 +53,7 @@ def compute_market_caps() -> List:
             WHERE calc.id = income_statement.id
               AND calc.statement_date = income_statement.statement_date;
         """)
-        # NOTE: kept as in the original. DISTINCT with no ORDER BY means the
-        # order is not guaranteed to match calc.id — see README.
-        cur.execute("SELECT DISTINCT market_cap FROM calc;")
+        cur.execute("SELECT market_cap FROM calc ORDER BY id;")
         caps = [row[0] for row in cur.fetchall()]
     return caps
 

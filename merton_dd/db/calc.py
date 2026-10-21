@@ -1,16 +1,21 @@
-"""Reads/writes for the calc table (model inputs and outputs)."""
-from typing import List, Sequence
+"""Reads/writes for the calc table (model inputs and outputs).
+
+Every value is written and read together with its calc.id, so deleting rows
+(or gaps in the ids) can never shift values onto the wrong row.
+"""
+from datetime import date
+from typing import Iterable, List, Optional, Tuple
 
 from psycopg2 import extras, sql
 
 from merton_dd.db.connection import transaction
 
 
-def write_column(values: Sequence, column: str) -> None:
-    """
-    Write `values` into calc.<column>, pairing values[0] with id 1, values[1] with id 2, ...
-    """
-    rows = [(val, i) for i, val in enumerate(values, start=1)]
+def write_column(column: str, values_by_id: Iterable[Tuple[int, object]]) -> None:
+    """Write (id, value) pairs into calc.<column>."""
+    rows = [(val, row_id) for row_id, val in values_by_id]
+    if not rows:
+        return
     query = sql.SQL("""
         UPDATE calc AS c
         SET {col} = data.new_val
@@ -21,9 +26,8 @@ def write_column(values: Sequence, column: str) -> None:
         extras.execute_values(cur, query, rows)
 
 
-def compute_default_points() -> List:
+def compute_default_points() -> None:
     """default_point = current liabilities + 0.5 * long-term debt; id 1 reuses id 2's value."""
-    results: List = []
     with transaction() as cur:
         cur.execute("""
             UPDATE calc c
@@ -37,14 +41,10 @@ def compute_default_points() -> List:
             SET default_point = (SELECT default_point FROM calc WHERE id = 2)
             WHERE id = 1;
         """)
-        cur.execute("SELECT default_point FROM calc ORDER BY id;")
-        results = [row[0] for row in cur.fetchall()]
-    return results
 
 
-def compute_market_caps() -> List:
-    """market_cap = share_price * shares_outstanding; returns caps ordered by calc.id."""
-    caps: List = []
+def compute_market_caps() -> None:
+    """market_cap = share_price * shares_outstanding."""
     with transaction("Error while processing") as cur:
         cur.execute("""
             UPDATE calc
@@ -53,9 +53,6 @@ def compute_market_caps() -> List:
             WHERE calc.id = income_statement.id
               AND calc.statement_date = income_statement.statement_date;
         """)
-        cur.execute("SELECT market_cap FROM calc ORDER BY id;")
-        caps = [row[0] for row in cur.fetchall()]
-    return caps
 
 
 def remove_rows_without_default_point() -> None:
@@ -64,8 +61,30 @@ def remove_rows_without_default_point() -> None:
         print(f"Successfully deleted {cur.rowcount} rows with default_point = 0")
 
 
-def compute_distance_to_default() -> List[float]:
-    """Computes DD in SQL from market_val_assets, default_point, asset_vol and riskfreerate (T = 1)."""
+def load_merton_inputs() -> List[Tuple[int, float, float, float, float]]:
+    """
+    (id, market_cap, volatility, default_point, riskfreerate) for every row that
+    has all four inputs, ordered by id. Rows missing an input are skipped rather
+    than crashing the solver.
+    """
+    rows: List = []
+    with transaction() as cur:
+        cur.execute("""
+            SELECT id, market_cap, volatility, default_point, riskfreerate
+            FROM calc
+            WHERE market_cap IS NOT NULL
+              AND volatility IS NOT NULL
+              AND default_point IS NOT NULL
+              AND riskfreerate IS NOT NULL
+            ORDER BY id;
+        """)
+        rows = cur.fetchall()
+    # Postgres NUMERIC comes back as Decimal; the solver needs floats.
+    return [(r[0], float(r[1]), float(r[2]), float(r[3]), float(r[4])) for r in rows]
+
+
+def compute_distance_to_default() -> List[Tuple[int, Optional[float]]]:
+    """Computes DD in SQL (T = 1) and returns (id, dd) pairs ordered by id; dd is None where undefined."""
     rows: List = []
     with transaction() as cur:
         cur.execute("""
@@ -81,7 +100,22 @@ def compute_distance_to_default() -> List[float]:
                 END
             FROM income_statement AS src
             WHERE calc.id = src.id
-            RETURNING calc.distance_to_default;
+            RETURNING calc.id, calc.distance_to_default;
         """)
         rows = cur.fetchall()
-    return [float(r[0]) for r in rows]
+    # RETURNING has no guaranteed order, so sort here.
+    return sorted((r[0], None if r[1] is None else float(r[1])) for r in rows)
+
+
+def load_results() -> List[Tuple[date, float]]:
+    """(statement_date, default probability) for every row that has one, newest first."""
+    rows: List = []
+    with transaction() as cur:
+        cur.execute("""
+            SELECT statement_date, dtd_value
+            FROM calc
+            WHERE dtd_value IS NOT NULL
+            ORDER BY id;
+        """)
+        rows = cur.fetchall()
+    return [(r[0], float(r[1])) for r in rows]

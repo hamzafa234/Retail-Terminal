@@ -1,6 +1,13 @@
-"""End-to-end run for one ticker: fetch statements, build model inputs, solve Merton, store results."""
+"""End-to-end run for one ticker: fetch statements, build model inputs, solve Merton, store results.
+
+Values are always passed to the database as (calc.id, value) pairs, never by
+list position, so rows that are skipped or deleted can't shift data onto the
+wrong date.
+"""
 from datetime import date
 from typing import List, Tuple
+
+import numpy as np
 
 from merton_dd.data.market import get_betas, get_closing_prices, get_treasury_yields
 from merton_dd.data.sec import get_company_financials
@@ -30,34 +37,55 @@ def equity_volatilities(ticker: str, dates: List[date]) -> List[float]:
     return vols
 
 
+def write_market_inputs(ticker: str, ids: List[int], dates: List[date]) -> None:
+    calc_db.write_column("volatility", zip(ids, equity_volatilities(ticker, dates)))
+    calc_db.write_column("beta", zip(ids, get_betas(ticker, dates)))
+    calc_db.write_column("share_price", zip(ids, get_closing_prices(ticker, dates)))
+    calc_db.write_column("riskfreerate", zip(ids, get_treasury_yields(dates)))
+
+
+def solve_and_store_assets() -> None:
+    inputs = calc_db.load_merton_inputs()
+    if not inputs:
+        raise RuntimeError("No rows have complete inputs (market cap, volatility, default point, rate).")
+
+    ids, caps, vols, default_points, rates = (list(col) for col in zip(*inputs))
+    asset_values, asset_vols = solve_merton(caps, vols, default_points, rates, HORIZON_YEARS)
+
+    # solve_merton returns plain floats when there is a single row.
+    asset_values = np.atleast_1d(asset_values)
+    asset_vols = np.atleast_1d(asset_vols)
+
+    calc_db.write_column("market_val_assets", zip(ids, (int(v) for v in asset_values)))
+    calc_db.write_column("asset_vol", zip(ids, (float(s) for s in asset_vols)))
+
+
+def store_default_probabilities() -> None:
+    distances = [(row_id, dd) for row_id, dd in calc_db.compute_distance_to_default() if dd is not None]
+    print(distances)
+    if not distances:
+        return
+    ids, dds = zip(*distances)
+    calc_db.write_column("dtd_value", zip(ids, default_probabilities(dds)))
+
+
 def run(ticker: str, years: int) -> Tuple[List[date], List[float]]:
-    """Returns (dates, default probabilities)."""
+    """Returns (dates, default probabilities), newest first, for every row that has a result."""
     load_statements(ticker, years)
 
-    dates = statements_db.prepare_dates(get_last_nyse_close_date())
+    calc_rows = statements_db.prepare_dates(get_last_nyse_close_date())
+    ids = [row_id for row_id, _ in calc_rows]
+    dates = [d for _, d in calc_rows]
     print(dates)
 
-    # Market inputs
-    vols = equity_volatilities(ticker, dates)
-    yields = get_treasury_yields(dates)
-    calc_db.write_column(vols, "volatility")
-    calc_db.write_column(get_betas(ticker, dates), "beta")
-    calc_db.write_column(get_closing_prices(ticker, dates), "share_price")
-    calc_db.write_column(yields, "riskfreerate")
+    write_market_inputs(ticker, ids, dates)
+    calc_db.compute_default_points()
+    calc_db.compute_market_caps()
 
-    # Balance-sheet inputs
-    default_points = calc_db.compute_default_points()
-    market_caps = [float(c) for c in calc_db.compute_market_caps()]
-
-    # Solve
-    asset_values, asset_vols = solve_merton(market_caps, vols, default_points, yields, HORIZON_YEARS)
+    # Drop unusable rows *before* solving, so the solver only sees real data.
     calc_db.remove_rows_without_default_point()
-    calc_db.write_column([int(v) for v in asset_values], "market_val_assets")
-    calc_db.write_column([float(s) for s in asset_vols], "asset_vol")
+    solve_and_store_assets()
+    store_default_probabilities()
 
-    distances = calc_db.compute_distance_to_default()
-    print(distances)
-    probabilities = default_probabilities(distances)
-    calc_db.write_column(probabilities, "dtd_value")
-
-    return dates, probabilities
+    results = calc_db.load_results()
+    return [d for d, _ in results], [p for _, p in results]

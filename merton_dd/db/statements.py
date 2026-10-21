@@ -1,6 +1,6 @@
 """Reads/writes for the income_statement, balance_sheet and cashflow_statement tables."""
 from datetime import date
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 from psycopg2 import extras, sql
 
@@ -61,11 +61,7 @@ RESEED_CALC_SQL = """
     SELECT id, statement_date FROM income_statement ORDER BY id;
 """
 
-FETCH_DATES_SQL = """
-    SELECT statement_date FROM income_statement
-    GROUP BY statement_date
-    ORDER BY statement_date DESC;
-"""
+FETCH_CALC_ROWS_SQL = "SELECT id, statement_date FROM calc ORDER BY id;"
 
 
 def clear_database() -> None:
@@ -107,19 +103,22 @@ def sync_calc_dates() -> None:
         """)
 
 
-def prepare_dates(latest: date) -> List[date]:
+def prepare_dates(latest: date) -> List[Tuple[int, date]]:
     """
     Drops dates not present in all three statements, inserts `latest` as id 1 in
     income_statement (copying id 2's figures into it), re-seeds calc with the
-    income_statement ids/dates, and returns all dates newest-first.
+    income_statement ids/dates, and returns the calc rows as (id, date), newest first.
+
+    The ids are returned because they can have gaps (rows dropped by the date
+    sync above), so a value's list position is not its id.
     """
-    dates: List[date] = []
+    rows: List[Tuple[int, date]] = []
     with transaction() as cur:
         cur.execute(SYNC_DATES_SQL)
         cur.execute(SHIFT_IDS_SQL)
         cur.execute(INSERT_LATEST_SQL, (latest,))
         cur.execute(COPY_ROW_2_TO_1_SQL)
         cur.execute(RESEED_CALC_SQL)
-        cur.execute(FETCH_DATES_SQL)
-        dates = [row[0] for row in cur.fetchall()]
-    return dates
+        cur.execute(FETCH_CALC_ROWS_SQL)
+        rows = [(row[0], row[1]) for row in cur.fetchall()]
+    return rows

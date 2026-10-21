@@ -56,10 +56,15 @@ merton_dd/
 
 Removed as unused: `tracked_get` / `total_bytes` (nothing called it, so the "Total downloaded" line always printed 0), and the `sec_api`, `os`, `re`, `ast` imports.
 
-## Known issues carried over unchanged
+## How values stay on the right row
 
-The refactor keeps behaviour identical, so these existed before and still do:
+`calc.id` can have gaps: the date sync drops quarters missing from any statement, and rows with `default_point = 0` are deleted. So nothing is ever matched up by list position. `prepare_dates()` returns `(id, date)` pairs, `write_column()` takes `(id, value)` pairs, and the Merton solver reads its inputs straight from `calc` (with their ids) after bad rows are removed. Rows missing an input are skipped instead of crashing the solver.
 
-1. `compute_market_caps` uses `SELECT DISTINCT market_cap FROM calc` with no `ORDER BY`. The list can come back in any order, and two periods with the same cap collapse to one — then it no longer lines up with `vols`, `default_points` and `yields` in `solve_merton`. Probably want `SELECT market_cap FROM calc ORDER BY id`.
-2. `remove_rows_without_default_point` deletes rows from `calc` *after* the input lists are built, but `write_column` still maps list position → `id` starting at 1. After a deletion the ids have gaps and the values land on the wrong rows.
-3. Row `id = 1` (the latest trading day) reuses the previous quarter's statements and default point by design; worth keeping in mind when reading the most recent point.
+## Fixed bugs (from the original `main.py`)
+
+1. Market caps were read with `SELECT DISTINCT` and no `ORDER BY`, so they could come back in any order and duplicates were dropped.
+2. Values were written to `calc` by list position (1, 2, 3…) rather than by `id`. Once ids had gaps, values landed on the wrong dates or were lost. Bad rows were also deleted *after* solving, so the solver ran on them.
+
+## Worth knowing
+
+Row `id = 1` (the latest trading day) reuses the previous quarter's statements and default point by design.

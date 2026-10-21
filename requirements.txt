@@ -1,0 +1,8 @@
+psycopg2-binary
+requests
+yfinance
+pandas
+numpy
+pandas_market_calendars
+scipy
+plotext

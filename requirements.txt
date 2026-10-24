@@ -5,7 +5,5 @@ pandas
 numpy
 pandas_market_calendars
 scipy
-plotext
-psycopg[binary]>=3.2
-requests>=2.32
+plotext==5.3.2
 python-dotenv

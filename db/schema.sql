@@ -1,7 +1,8 @@
 -- financial database schema for postgresql
 -- database: fin_data
-create database fin_data;
-\c fin_data;
+SELECT 'CREATE DATABASE fin_data'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'fin_data')\gexec
+\c fin_data
 
 
 

@@ -6,3 +6,6 @@ numpy
 pandas_market_calendars
 scipy
 plotext
+psycopg[binary]>=3.2
+requests>=2.32
+python-dotenv

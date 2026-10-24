@@ -37,14 +37,16 @@ def solve_merton(E, sigma_E, D, r, T):
     shape = np.broadcast_shapes(*(a.shape for a in arrays))
     flat = [np.broadcast_to(a, shape).flatten() for a in arrays]
 
-    V_A = np.zeros_like(flat[0])
-    sigma_A = np.zeros_like(flat[0])
+    # Always float: an integer input array would otherwise truncate the results.
+    V_A = np.zeros(flat[0].shape, dtype=float)
+    sigma_A = np.zeros(flat[0].shape, dtype=float)
     for i, args in enumerate(zip(*flat)):
-        V_A[i], sigma_A[i] = _solve_one(*args)
+        V_A[i], sigma_A[i] = _solve_one(*(float(a) for a in args))
 
     V_A, sigma_A = V_A.reshape(shape), sigma_A.reshape(shape)
     if V_A.size == 1:
-        return float(V_A), float(sigma_A)
+        # .item() works for any one-element array; float() fails on 1-D arrays in NumPy 2.
+        return V_A.item(), sigma_A.item()
     return V_A, sigma_A
 
 

@@ -9,6 +9,25 @@ pip install -r requirements.txt
 python -m merton_dd        # or: python main.py
 ```
 
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
+| File | What it checks |
+|---|---|
+| `tests/test_merton.py` | the solver recovers known asset values/volatilities; default probabilities |
+| `tests/test_volatility.py` | annualized volatility on prices with known answers |
+| `tests/test_sec.py` | SEC parsing: tag fallbacks, 10-K/10-Q filtering, year cutoff, gap filling (fake data, no network) |
+| `tests/test_market.py` | next-trading-day prices and back-filled yields (fake yfinance, no network) |
+| `tests/test_pipeline.py` | a full run against Postgres; every value lands on the right date even with id gaps and deleted rows |
+
+The pipeline tests need Postgres running and use a separate database, `fin_data_test` (created automatically; override with `TEST_DB_NAME`). They never touch `fin_data`, and they skip if Postgres isn't reachable. Everything else runs anywhere in a couple of seconds.
+
+## Configuration
+
 Database settings come from environment variables (`DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST`, `DB_PORT`, `SEC_USER_AGENT`) with the old values as defaults — see `merton_dd/config.py`.
 
 ## Layout
